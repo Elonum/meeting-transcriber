@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+._pip_debug.log
+._wheels/
+
+# Node
+node_modules/
+frontend/dist/
+.npm-cache/
+
+# Runtime data: meeting recordings, transcripts, event logs
+data/
+.tmp/
+
+# Generated artifacts and probe output
+.artifacts/
+spike/out/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

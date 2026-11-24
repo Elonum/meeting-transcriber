@@ -1,0 +1,233 @@
+"""HTTP + WebSocket API.
+
+Routes
+------
+GET    /api/health                       liveness + which pipelines are available
+GET    /api/sessions                     list sessions, newest first
+POST   /api/sessions                     start an agent for a meeting URL
+GET    /api/sessions/{id}                snapshot (participants + final segments)
+POST   /api/sessions/{id}/stop           stop the agent
+GET    /api/sessions/{id}/export/{fmt}   download transcript (srt|vtt|txt|md|json)
+GET    /api/sessions/{id}/log            raw event log (JSONL) — audit trail
+WS     /events/{id}                      live event stream for one session
+
+The socket is server -> client only. State-changing calls are plain REST so that
+every mutation has an idempotent, auditable entry point.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Literal
+from urllib.parse import quote, urlparse
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
+
+from . import export as exporters
+from . import protocol as p
+from .mock import MockPipeline
+from .session import SessionManager
+
+log = logging.getLogger("transcribe")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = Path(os.environ.get("TRANSCRIBE_DATA_DIR", ROOT / "data"))
+STATIC_DIR = Path(os.environ.get("TRANSCRIBE_STATIC_DIR", ROOT / "frontend" / "dist"))
+
+manager = SessionManager(DATA_DIR)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    loaded = manager.load_from_disk()
+    if loaded:
+        log.info("restored %d session(s) from %s", loaded, DATA_DIR)
+    yield
+
+
+app = FastAPI(
+    title="Transcribe — онлайн-транскрибация встреч",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class StartRequest(BaseModel):
+    meeting_url: str = Field(..., description="Ссылка на встречу Jazz")
+    title: str | None = Field(None, max_length=200)
+    duration_min: int | None = Field(None, ge=1, le=600)
+    pipeline: Literal["mock"] = "mock"
+    speed: float = Field(1.0, ge=0.05, le=50.0, description="Ускорение для тестов и демо")
+
+    @field_validator("meeting_url")
+    @classmethod
+    def _check_url(cls, value: str) -> str:
+        parsed = urlparse(value.strip())
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("нужна полная ссылка вида https://…")
+        return value.strip()
+
+
+class SessionResponse(BaseModel):
+    session: dict
+    participants: list[dict]
+    segments: list[dict]
+
+
+def _require(session_id: str):
+    session = manager.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="сессия не найдена")
+    return session
+
+
+@app.get("/api/health")
+async def health() -> dict:
+    return {
+        "status": "ok",
+        "pipelines": {"mock": True},
+        "sessions": len(manager.sessions),
+        "data_dir": str(DATA_DIR),
+        "static_ready": (STATIC_DIR / "index.html").is_file(),
+    }
+
+
+@app.get("/api/sessions")
+async def list_sessions() -> dict:
+    return {"sessions": [s.as_dict() for s in manager.all()]}
+
+
+@app.post("/api/sessions", status_code=201)
+async def create_session(payload: StartRequest) -> dict:
+    pipeline = MockPipeline(payload.meeting_url, speed=payload.speed)
+    session = manager.create(
+        payload.meeting_url,
+        title=payload.title,
+        duration_min=payload.duration_min,
+        pipeline=pipeline,
+    )
+    await session.start(speed=payload.speed)
+    log.info("session %s started (pipeline=%s)", session.id, pipeline.name)
+    return session.as_dict()
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str) -> SessionResponse:
+    session = _require(session_id)
+    return SessionResponse(
+        session=session.as_dict(),
+        participants=sorted(session.participants.values(), key=lambda x: x["joined_at_ms"]),
+        segments=session.final_segments(),
+    )
+
+
+@app.post("/api/sessions/{session_id}/stop")
+async def stop_session(session_id: str) -> dict:
+    session = _require(session_id)
+    await session.stop()
+    return session.as_dict()
+
+
+@app.get("/api/sessions/{session_id}/log")
+async def session_log(session_id: str) -> Response:
+    session = _require(session_id)
+    path = session.dir / "events.jsonl"
+    body = path.read_text(encoding="utf-8") if path.is_file() else ""
+    return Response(content=body, media_type="application/x-ndjson; charset=utf-8")
+
+
+@app.get("/api/sessions/{session_id}/export/{fmt}")
+async def export_session(session_id: str, fmt: str) -> Response:
+    session = _require(session_id)
+    if fmt not in exporters.FORMATS:
+        raise HTTPException(status_code=400, detail=f"формат должен быть одним из {exporters.FORMATS}")
+    body = exporters.render(
+        fmt,
+        session.as_dict(),
+        session.final_segments(),
+        list(session.participants.values()),
+    )
+    filename = _disposition(session.title, fmt)
+    return Response(
+        content=body,
+        media_type=exporters.CONTENT_TYPES[fmt],
+        headers={"Content-Disposition": filename},
+    )
+
+
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh",
+    "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
+    "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "kh", "ц": "ts",
+    "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu",
+    "я": "ya",
+}
+
+
+def _slug(title: str) -> str:
+    ascii_title = "".join(_TRANSLIT.get(ch, ch) for ch in title.lower())
+    return re.sub(r"[^a-z0-9]+", "-", ascii_title).strip("-")[:60] or "transcript"
+
+
+def _disposition(title: str, fmt: str) -> str:
+    """ASCII-safe download name plus an RFC 5987 UTF-8 name.
+
+    HTTP headers are latin-1, so a Cyrillic title has to be transliterated for
+    the plain ``filename`` and passed quoted in ``filename*`` for modern clients.
+    """
+    slug = _slug(title)
+    return f"attachment; filename=\"{slug}.{fmt}\"; filename*=UTF-8''{quote(slug)}.{fmt}"
+
+
+@app.websocket("/events/{session_id}")
+async def events(socket: WebSocket, session_id: str) -> None:
+    session = manager.get(session_id)
+    if session is None:
+        await socket.close(code=4404)
+        return
+    await socket.accept()
+    queue = session.subscribe()
+    try:
+        await socket.send_text(json.dumps(session.snapshot(), ensure_ascii=False))
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=20.0)
+            except asyncio.TimeoutError:
+                await socket.send_text(json.dumps({"type": "ping", "at_ms": 0}))
+                continue
+            await socket.send_text(json.dumps(event, ensure_ascii=False))
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        session.unsubscribe(queue)
+
+
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="web")
+else:  # pragma: no cover - developer convenience only
+
+    @app.get("/", response_class=HTMLResponse)
+    async def placeholder() -> str:
+        return (
+            "<h1>Фронтенд ещё не собран</h1>"
+            "<p>Выполните <code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code>, "
+            "затем перезапустите сервер. API доступен: "
+            '<a href="/docs">/docs</a>, <a href="/api/health">/api/health</a>.</p>'
+        )
