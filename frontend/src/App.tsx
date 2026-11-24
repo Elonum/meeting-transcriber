@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createSession, listSessions, stopSession } from './api'
 import type { CreateSessionPayload, SessionInfo } from './types'
 import { useSessionStream } from './useSessionStream'
-import { formatClock, stateLabel } from './format'
+import { formatClock, formatWhen, stateLabel } from './format'
 import { NewSessionForm } from './components/NewSessionForm'
 import { SessionList } from './components/SessionList'
 import { ExportPanel } from './components/ExportPanel'
@@ -58,6 +58,7 @@ export default function App() {
   }
 
   const live = active?.state === 'live' || active?.state === 'connecting'
+  const waiting = active?.state === 'scheduled'
 
   return (
     <div className="app">
@@ -107,18 +108,26 @@ export default function App() {
                   {stateLabel(active.state)}
                 </span>
                 <span className="topbar__meta">
-                  начало {formatClock(active.started_at_ms)} · {stream.finals} реплик
+                  {waiting && active.start_at_ms
+                    ? `агент подключится ${formatWhen(active.start_at_ms)}`
+                    : `начало ${formatClock(active.started_at_ms)} · ${stream.finals} реплик`}
                   {!stream.connected && active.state === 'live' && ' · переподключение…'}
                 </span>
-                {live && (
+                {(live || waiting) && (
                   <button type="button" className="danger" onClick={onStop}>
-                    Остановить
+                    {waiting ? 'Отменить' : 'Остановить'}
                   </button>
                 )}
               </div>
             </header>
 
             {active.error && <div className="banner banner--error">Ошибка сессии: {active.error}</div>}
+            {waiting && active.start_at_ms && (
+              <div className="banner banner--info">
+                Агент подключится {formatWhen(active.start_at_ms)}. До этого момента ничего не записывается —
+                сессию можно отменить.
+              </div>
+            )}
             {active.pipeline === 'mock' && (
               <div className="banner banner--info">
                 Демо-пайплайн: речь синтезирована, но протокол, спикеры, лица и экспорт — настоящие.

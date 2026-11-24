@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { CreateSessionPayload } from '../types'
+import { toLocalInputValue } from '../format'
 
 type Mode = 'mock' | 'jazz'
 
@@ -13,6 +14,7 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
   const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [duration, setDuration] = useState('')
+  const [startAt, setStartAt] = useState('')
   const [speed, setSpeed] = useState('1')
   const [mode, setMode] = useState<Mode>('mock')
   const [showBrowser, setShowBrowser] = useState(false)
@@ -32,6 +34,7 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
         meeting_url: url.trim(),
         title: title.trim() || null,
         duration_min: duration ? Number(duration) : null,
+        start_at: startAt ? new Date(startAt).toISOString() : null,
         pipeline: mode,
         speed: live ? 1 : Number(speed),
         headless: !showBrowser,
@@ -39,6 +42,7 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
       setUrl('')
       setTitle('')
       setDuration('')
+      setStartAt('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось запустить сессию')
     }
@@ -79,6 +83,16 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
           placeholder="Планёрка по транскрибации"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
+        />
+      </label>
+
+      <label className="field">
+        <span>Начать в <em>пусто — подключиться сразу</em></span>
+        <input
+          type="datetime-local"
+          value={startAt}
+          min={toLocalInputValue(Date.now())}
+          onChange={(event) => setStartAt(event.target.value)}
         />
       </label>
 

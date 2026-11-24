@@ -23,6 +23,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote, urlparse
@@ -53,6 +54,16 @@ async def lifespan(_: FastAPI):
     loaded = manager.load_from_disk()
     if loaded:
         log.info("restored %d session(s) from %s", loaded, DATA_DIR)
+    for session in manager.due_scheduled():
+        session.pipeline = _build_pipeline(
+            session.meeting_url,
+            pipeline=session.pipeline.name,
+            headless=bool(session.options.get("headless", True)),
+            model=str(session.options.get("model", "large-v3-turbo")),
+            speed=float(session.options.get("speed", 1.0)),
+        )
+        await session.start(speed=float(session.options.get("speed", 1.0)))
+        log.info("re-armed scheduled session %s", session.id)
     yield
 
 
@@ -73,6 +84,9 @@ class StartRequest(BaseModel):
     meeting_url: str = Field(..., description="Ссылка на встречу Jazz")
     title: str | None = Field(None, max_length=200)
     duration_min: int | None = Field(None, ge=1, le=600)
+    start_at: datetime | None = Field(
+        None, description="Когда подключаться (ISO 8601). Пусто — сразу"
+    )
     pipeline: Literal["mock", "jazz"] = Field(
         "mock", description="mock — сценарная демонстрация; jazz — настоящий браузерный агент"
     )
@@ -125,34 +139,62 @@ async def list_sessions() -> dict:
     return {"sessions": [s.as_dict() for s in manager.all()]}
 
 
-@app.post("/api/sessions", status_code=201)
-async def create_session(payload: StartRequest) -> dict:
-    if payload.pipeline == "jazz":
+def _build_pipeline(
+    meeting_url: str,
+    *,
+    pipeline: str,
+    headless: bool,
+    model: str,
+    speed: float,
+):
+    if pipeline == "jazz":
         from .jazz import JazzPipeline
 
-        pipeline = JazzPipeline(
-            payload.meeting_url,
-            headless=payload.headless,
-            model=payload.model,
-        )
-        session = manager.create(
-            payload.meeting_url,
-            title=payload.title,
-            duration_min=payload.duration_min,
-            pipeline=pipeline,
-        )
-        await session.start(speed=1.0)
-    else:
-        mock = MockPipeline(payload.meeting_url, speed=payload.speed)
-        session = manager.create(
-            payload.meeting_url,
-            title=payload.title,
-            duration_min=payload.duration_min,
-            pipeline=mock,
-        )
-        await session.start(speed=payload.speed)
+        return JazzPipeline(meeting_url, headless=headless, model=model)
+    return MockPipeline(meeting_url, speed=speed)
 
-    log.info("session %s started (pipeline=%s)", session.id, session.pipeline.name)
+
+@app.post("/api/sessions", status_code=201)
+async def create_session(payload: StartRequest) -> dict:
+    start_at_ms: int | None = None
+    if payload.start_at is not None:
+        moment = payload.start_at
+        if moment.tzinfo is None:
+            # Naive datetime comes from <input type="datetime-local">; the
+            # operator means their own local time, not UTC.
+            moment = moment.astimezone()
+        start_at_ms = int(moment.timestamp() * 1000)
+        if start_at_ms < p.now_ms() - 60_000:
+            raise HTTPException(status_code=422, detail="время старта уже прошло")
+
+    pipeline = _build_pipeline(
+        payload.meeting_url,
+        pipeline=payload.pipeline,
+        headless=payload.headless,
+        model=payload.model,
+        speed=payload.speed,
+    )
+    session = manager.create(
+        payload.meeting_url,
+        title=payload.title,
+        duration_min=payload.duration_min,
+        pipeline=pipeline,
+        start_at_ms=start_at_ms,
+        options={
+            "pipeline": payload.pipeline,
+            "headless": payload.headless,
+            "model": payload.model,
+            "speed": payload.speed,
+        },
+    )
+    await session.start(speed=payload.speed)
+
+    log.info(
+        "session %s started (pipeline=%s, start_at=%s)",
+        session.id,
+        session.pipeline.name,
+        moment.isoformat() if start_at_ms else "now",
+    )
     return session.as_dict()
 
 

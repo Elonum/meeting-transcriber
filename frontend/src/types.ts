@@ -1,4 +1,5 @@
 export type SessionState =
+  | 'scheduled'
   | 'connecting'
   | 'live'
   | 'stopping'
@@ -13,6 +14,8 @@ export interface SessionInfo {
   state: SessionState
   error: string | null
   started_at_ms: number
+  created_at_ms: number
+  start_at_ms: number | null
   duration_min: number | null
   participants_count: number
   segments_count: number
@@ -66,6 +69,7 @@ export interface CreateSessionPayload {
   meeting_url: string
   title?: string | null
   duration_min?: number | null
+  start_at?: string | null
   pipeline?: 'mock' | 'jazz'
   speed?: number
   headless?: boolean

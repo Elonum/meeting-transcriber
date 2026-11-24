@@ -274,7 +274,8 @@ class WhisperRunner:
         self.beam_size = beam_size
         self.resolved: str | None = None
         self._model: Any = None
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # guards lazy model construction
+        self._infer_lock = threading.Lock()  # ctranslate2 is not thread-safe
 
     def ensure(self) -> Any:
         if self._model is not None:
@@ -305,18 +306,62 @@ class WhisperRunner:
             return self._model
 
     def transcribe(self, audio: np.ndarray, *, greedy: bool = False) -> str:
+        """Transcribe one utterance.
+
+        ctranslate2 models are not thread-safe, and several participants are
+        transcribed from different worker threads. Finals therefore wait for the
+        lock; interim revisions give up immediately instead of queueing up behind
+        the final, which would turn a live transcript into a backlog.
+        """
         if audio.size == 0:
             return ""
+
+        if greedy:
+            if not self._infer_lock.acquire(blocking=False):
+                return ""
+            try:
+                return self._run(audio, beam_size=1)
+            finally:
+                self._infer_lock.release()
+
+        with self._infer_lock:
+            return self._run(audio, beam_size=self.beam_size)
+
+    def _run(self, audio: np.ndarray, *, beam_size: int) -> str:
         model = self.ensure()
         segments, _info = model.transcribe(
             audio,
             language=self.language,
-            beam_size=1 if greedy else self.beam_size,
+            beam_size=beam_size,
             vad_filter=False,  # VAD already ran upstream
             condition_on_previous_text=False,
             without_timestamps=True,
         )
         return " ".join(segment.text.strip() for segment in segments).strip()
+
+
+_RUNNERS: dict[tuple[str, str, str], "WhisperRunner"] = {}
+_RUNNERS_LOCK = threading.Lock()
+
+
+def get_runner(
+    model_name: str = "large-v3-turbo",
+    *,
+    device: str = "auto",
+    language: str = "ru",
+) -> "WhisperRunner":
+    """One runner per (model, device, language), shared by every session.
+
+    Loading 1.6 GB of weights per meeting would make the second session in a row
+    feel broken; the model is read-only after construction, so sharing is safe.
+    """
+    key = (model_name, device, language)
+    with _RUNNERS_LOCK:
+        runner = _RUNNERS.get(key)
+        if runner is None:
+            runner = WhisperRunner(model_name, device=device, language=language)
+            _RUNNERS[key] = runner
+        return runner
 
 
 class ParticipantASR:
@@ -345,8 +390,6 @@ class ParticipantASR:
 
         out: list[ASREvent] = []
         for event in self.detector.push(audio):
-            if event.kind == "speech_stop":
-                out.append(ASREvent("speech_stop" if False else "final", start_ms=event.start_ms, end_ms=event.end_ms, text="")) if False else None
             if event.kind == "segment" and event.pcm is not None:
                 text = self.runner.transcribe(event.pcm)
                 if text:

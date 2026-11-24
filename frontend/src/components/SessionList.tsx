@@ -1,5 +1,5 @@
 import type { SessionInfo } from '../types'
-import { formatClock, stateLabel } from '../format'
+import { formatWhen, stateLabel } from '../format'
 
 interface SessionListProps {
   sessions: SessionInfo[]
@@ -34,7 +34,9 @@ export function SessionList({ sessions, activeId, onSelect, onRefresh }: Session
                 </span>
                 <span className="session__title">{session.title || 'Без названия'}</span>
                 <span className="session__meta">
-                  {formatClock(session.started_at_ms)} · {session.segments_count} реплик
+                  {session.state === 'scheduled' && session.start_at_ms
+                    ? `старт ${formatWhen(session.start_at_ms)}`
+                    : `${formatWhen(session.started_at_ms)} · ${session.segments_count} реплик`}
                 </span>
               </button>
             </li>

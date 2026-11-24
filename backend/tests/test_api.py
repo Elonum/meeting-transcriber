@@ -147,3 +147,57 @@ def test_stop_is_idempotent(client: TestClient) -> None:
 def test_unknown_session_is_404(client: TestClient) -> None:
     assert client.get("/api/sessions/nope").status_code == 404
     assert client.post("/api/sessions/nope/stop").status_code == 404
+
+
+def test_scheduled_session_waits_then_runs(client: TestClient) -> None:
+    """The brief asks for "ссылка + время": the agent must wait for the clock."""
+    from datetime import datetime, timedelta, timezone
+
+    start_at = (datetime.now(timezone.utc) + timedelta(seconds=3)).isoformat()
+    created = client.post(
+        "/api/sessions",
+        json={"meeting_url": MEETING, "start_at": start_at, "speed": 30},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    assert created.json()["start_at_ms"] > 0
+
+    time.sleep(0.4)
+    state = client.get(f"/api/sessions/{session_id}").json()["session"]["state"]
+    assert state == "scheduled", state
+    # Nothing may be transcribed before the start time.
+    assert client.get(f"/api/sessions/{session_id}").json()["segments"] == []
+
+    deadline = time.time() + 20
+    state = "scheduled"
+    while time.time() < deadline:
+        state = client.get(f"/api/sessions/{session_id}").json()["session"]["state"]
+        if state in ("live", "finished"):
+            break
+        time.sleep(0.2)
+    assert state in ("live", "finished"), state
+
+    payload = _wait_finished(client, session_id)
+    assert payload["segments"], "scheduled session produced no transcript"
+
+
+def test_past_start_at_is_rejected(client: TestClient) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    start_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    response = client.post("/api/sessions", json={"meeting_url": MEETING, "start_at": start_at})
+    assert response.status_code == 422
+    assert "прошло" in response.text
+
+
+def test_scheduled_session_can_be_cancelled(client: TestClient) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    start_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    created = client.post("/api/sessions", json={"meeting_url": MEETING, "start_at": start_at})
+    session_id = created.json()["id"]
+    time.sleep(0.3)
+    assert client.post(f"/api/sessions/{session_id}/stop").status_code == 200
+    time.sleep(0.3)
+    state = client.get(f"/api/sessions/{session_id}").json()["session"]["state"]
+    assert state == "finished", state

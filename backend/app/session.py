@@ -52,6 +52,8 @@ class Session:
         *,
         title: str | None = None,
         duration_min: int | None = None,
+        start_at_ms: int | None = None,
+        options: dict[str, Any] | None = None,
         data_dir: Path,
     ) -> None:
         self.id = session_id
@@ -59,6 +61,9 @@ class Session:
         self.title = title or "Встреча"
         self.pipeline = pipeline
         self.started_at_ms = started_at_ms
+        self.created_at_ms = started_at_ms
+        self.start_at_ms = start_at_ms
+        self.options = options or {}
         self.duration_min = duration_min
         self.dir = data_dir / session_id
 
@@ -86,7 +91,10 @@ class Session:
             "meeting_url": self.meeting_url,
             "pipeline": self.pipeline.name,
             "started_at_ms": self.started_at_ms,
+            "created_at_ms": self.created_at_ms,
+            "start_at_ms": self.start_at_ms,
             "duration_min": self.duration_min,
+            "options": self.options,
             "state": self.state,
             "error": self.error,
         }
@@ -145,6 +153,8 @@ class Session:
             "state": self.state,
             "error": self.error,
             "started_at_ms": self.started_at_ms,
+            "created_at_ms": self.created_at_ms,
+            "start_at_ms": self.start_at_ms,
             "duration_min": self.duration_min,
             "participants_count": len(self.participants),
             "segments_count": len(self.final_segments()),
@@ -186,10 +196,25 @@ class Session:
         self._task = asyncio.create_task(self._run(speed), name=f"session-{self.id}")
 
     async def _run(self, speed: float) -> None:
+        """Wait for ``start_at`` (the "время" from the brief), then go live.
+
+        The wait lives inside the same try block as the pipeline, so the ordinary
+        ``stop`` endpoint cancels a scheduled meeting the same way it stops a live
+        one — including the final state transition.
+        """
         self._write_meta()
-        await self.emit(p.ev_session(p.CONNECTING, self._at()))
         deadline_ms = None if not self.duration_min else self.duration_min * 60_000
         try:
+            if self.start_at_ms is not None and self.start_at_ms - p.now_ms() > 1000:
+                self.state = p.SCHEDULED
+                await self.emit(p.ev_session(p.SCHEDULED, self._at(), start_at_ms=self.start_at_ms))
+                delay = (self.start_at_ms - p.now_ms()) / 1000
+                log.info("session %s scheduled in %.0f s", self.id, delay)
+                await asyncio.sleep(delay)
+                # Transcript timestamps start at the real join, not at booking time.
+                self.started_at_ms = p.now_ms()
+
+            await self.emit(p.ev_session(p.CONNECTING, self._at()))
             await self.emit(p.ev_session(p.LIVE, self._at()))
             await self.pipeline.run(self.emit, deadline_ms)
             await self.emit(p.ev_done(self._at(), "completed"))
@@ -224,6 +249,8 @@ class SessionManager:
         title: str | None,
         duration_min: int | None,
         pipeline: Pipeline,
+        start_at_ms: int | None = None,
+        options: dict[str, Any] | None = None,
     ) -> Session:
         session_id = uuid.uuid4().hex[:12]
         session = Session(
@@ -233,6 +260,8 @@ class SessionManager:
             p.now_ms(),
             title=title,
             duration_min=duration_min,
+            start_at_ms=start_at_ms,
+            options=options,
             data_dir=self.data_dir,
         )
         self.sessions[session_id] = session
@@ -242,7 +271,17 @@ class SessionManager:
         return self.sessions.get(session_id)
 
     def all(self) -> list[Session]:
-        return sorted(self.sessions.values(), key=lambda s: s.started_at_ms, reverse=True)
+        return sorted(self.sessions.values(), key=lambda s: s.created_at_ms, reverse=True)
+
+    def due_scheduled(self) -> list[Session]:
+        """Sessions booked for the future that must be re-armed after a restart."""
+        return [
+            session
+            for session in self.sessions.values()
+            if session.state == p.SCHEDULED
+            and session.start_at_ms is not None
+            and session.start_at_ms > p.now_ms()
+        ]
 
     # -- restore after restart ----------------------------------------------
 
@@ -264,12 +303,19 @@ class SessionManager:
                     meta["started_at_ms"],
                     title=meta.get("title"),
                     duration_min=meta.get("duration_min"),
+                    start_at_ms=meta.get("start_at_ms"),
+                    options=meta.get("options") or {},
                     data_dir=self.data_dir,
                 )
                 for line in (session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         session.apply(json.loads(line))
-                if session.state not in p.TERMINAL_STATES:
+                still_booked = (
+                    session.state == p.SCHEDULED
+                    and session.start_at_ms is not None
+                    and session.start_at_ms > p.now_ms()
+                )
+                if session.state not in p.TERMINAL_STATES and not still_booked:
                     # The process died mid-session; nothing can resume it.
                     session.state = p.FAILED
                     session.error = session.error or "прервано перезапуском сервера"

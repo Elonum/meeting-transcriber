@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from . import protocol as p
-from .asr import ASREvent, ParticipantASR, WhisperRunner
+from .asr import ASREvent, ParticipantASR, get_runner
 from .capture import BrowserAgent
 from .faces import make_detector
 from .session import Emitter
@@ -44,7 +44,7 @@ class JazzPipeline:
         self.partial_interval_ms = partial_interval_ms
 
         self.agent = BrowserAgent(meeting_url, headless=headless, channel=channel)
-        self.runner = WhisperRunner(model, device=device, language=language)
+        self.runner = get_runner(model, device=device, language=language)
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
         self._asr: dict[str, ParticipantASR] = {}

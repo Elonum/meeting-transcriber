@@ -74,12 +74,21 @@ def main() -> int:
         tiles = page.locator(".tile")
         check("four participant tiles", tiles.count() == 4, f"got {tiles.count()}")
 
-        speaking = page.locator(".tile--speaking").count()
+        speaking = 0
+        try:
+            page.wait_for_selector(".tile--speaking", timeout=6000)
+            speaking = page.locator(".tile--speaking").count()
+        except Exception:  # noqa: BLE001 - a pause between phrases is not a bug
+            speaking = 0
         check("an active speaker is highlighted", speaking >= 1, f"{speaking} speaking")
 
         faces = page.locator(".tile__face:not(.tile__face--none)").count()
         check("faces are recognised and badged", faces == 3, f"{faces} badges (bot has no camera)")
 
+        try:
+            page.wait_for_function("document.querySelectorAll('.line').length >= 3", timeout=10000)
+        except Exception:  # noqa: BLE001
+            pass
         lines = page.locator(".line").count()
         check("transcript has lines", lines >= 3, f"{lines} lines")
 
@@ -135,6 +144,33 @@ def main() -> int:
             stopped = False
         state_text = page.locator(".pill").inner_text().strip()
         check("stop finishes the session", stopped, state_text)
+
+        # -- scheduling ------------------------------------------------------
+        from datetime import datetime, timedelta
+
+        future = (datetime.now() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M")
+        page.fill('input[type="url"]', "https://jazz.sber.ru/meeting/scheduled")
+        page.fill('input[placeholder="Планёрка по транскрибации"]', "Запланированная встреча")
+        page.fill('input[type="datetime-local"]', future)
+        page.click("button.primary")
+        try:
+            page.wait_for_selector(".pill--scheduled", timeout=8000)
+            scheduled = True
+        except Exception:  # noqa: BLE001
+            scheduled = False
+        check("scheduled session shows its state", scheduled, page.locator(".pill").inner_text().strip())
+        check("scheduled banner explains the wait", page.locator(".banner--info").count() >= 1)
+        check(
+            "cancel button replaces stop for a scheduled session",
+            page.locator("button.danger").inner_text().strip() == "Отменить",
+        )
+        page.click("button.danger")
+        page.wait_for_timeout(800)
+        check(
+            "cancelling a scheduled session finishes it",
+            "Завершено" in page.locator(".pill").inner_text(),
+            page.locator(".pill").inner_text().strip(),
+        )
 
         browser.close()
 

@@ -153,3 +153,59 @@ def test_agent_transcribes_a_real_meeting(server) -> None:
     # Every segment must carry a real speaker, not an "unknown" bucket.
     known = {part["id"] for part in participants}
     assert all(segment["participant_id"] in known for segment in payload["segments"])
+
+
+def test_two_participants_keep_their_own_words(server) -> None:
+    """The core promise: two people talk at once, each keeps their own words."""
+    second = FIXTURE.parent / "ru-2.wav"
+    if not second.is_file():
+        pytest.skip("second speech fixture missing")
+
+    meeting = (
+        f"http://127.0.0.1:{PORT}/fake-meeting/?peers=2"
+        f"&audio1=/fixtures/{FIXTURE.name}&name1=Анна Соколова"
+        f"&audio2=/fixtures/{second.name}&name2=Дмитрий Лебедев"
+    )
+    created = _post(
+        "/api/sessions",
+        {
+            "meeting_url": meeting,
+            "title": "E2E два спикера",
+            "pipeline": "jazz",
+            "headless": True,
+            "model": "large-v3-turbo",
+        },
+    )
+    session_id = created["id"]
+
+    deadline = time.time() + 240
+    payload: dict = {}
+    last_count = 0
+    last_change = time.time()
+    while time.time() < deadline:
+        payload = _get(f"/api/sessions/{session_id}")
+        if payload["session"]["state"] in ("finished", "failed"):
+            break
+        segments = payload["segments"]
+        if len(segments) != last_count:
+            last_count = len(segments)
+            last_change = time.time()
+        elif last_count >= 2 and time.time() - last_change > 8:
+            _post(f"/api/sessions/{session_id}/stop", {})
+        time.sleep(1.5)
+
+    names = {part["id"]: part["display_name"] for part in payload["participants"]}
+    by_name: dict[str, list[str]] = {}
+    for segment in payload["segments"]:
+        by_name.setdefault(names.get(segment["participant_id"], "?"), []).append(segment["text"])
+
+    assert set(by_name) >= {"Анна Соколова", "Дмитрий Лебедев"}, f"speakers: {by_name}"
+
+    anna = " ".join(by_name["Анна Соколова"]).lower()
+    dmitry = " ".join(by_name["Дмитрий Лебедев"]).lower()
+
+    # Each phrase belongs to the track it was spoken on — no cross-talk.
+    assert "планёрк" in anna, anna
+    assert "пятниц" in dmitry, dmitry
+    assert "пятниц" not in anna, f"Дмитрий's words leaked into Анна: {anna}"
+    assert "планёрк" not in dmitry, f"Анна's words leaked into Дмитрий: {dmitry}"

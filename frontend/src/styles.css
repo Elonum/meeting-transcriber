@@ -454,6 +454,12 @@ button.ghost--on {
   color: var(--ok);
 }
 
+.pill--scheduled {
+  border-color: rgb(240 168 76 / 42%);
+  background: rgb(240 168 76 / 10%);
+  color: var(--warn);
+}
+
 .pill--failed {
   border-color: rgb(227 104 143 / 45%);
   background: rgb(227 104 143 / 12%);
