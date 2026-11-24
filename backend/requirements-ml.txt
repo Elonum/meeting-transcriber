@@ -1,7 +1,8 @@
 # ML stack for the real ``jazz`` pipeline.
 #
-# Installed and verified on this machine (Python 3.14, RTX 3050 4 GB):
+# Verified on this machine (Python 3.14, RTX 3050 4 GB):
 #   faster-whisper 1.2.1 + ctranslate2 4.9.1 (cp314 wheels exist)
+#   opencv-python-headless 5.1 + pillow 13 (YuNet face detection)
 #
 # GPU inference needs the CUDA runtime, but a full CUDA Toolkit is not required:
 # the wheels below ship cuBLAS and cuDNN 9 for Windows and are picked up by
@@ -15,9 +16,13 @@ nvidia-cublas-cu12>=12.4
 nvidia-cudnn-cu12>=9.0
 # Linux alternative: install the CUDA runtime through the system package manager.
 
-# --- face detection (needs Python 3.12) --------------------------------------
-# no cp314 wheels yet for insightface / onnxruntime, so the pipeline falls back
-# to "frame captured, no detector". Enable these once the ML venv exists.
+# --- face detection (works on Python 3.14) ----------------------------------
+opencv-python-headless>=4.10
+pillow>=10
+# Model file (232 KB) is not committed: download OpenCV Zoo YuNet 2023mar to
+#   .models/face_detection_yunet_2023mar.onnx
+# The download command lives in the README, section "Лица".
+
+# --- identity by name (needs Python 3.12, not required for this MVP) ---------
 # insightface>=0.7.3
 # onnxruntime-gpu>=1.18
-# pillow>=10

@@ -30,6 +30,7 @@ import pytest
 E2E = os.environ.get("TRANSCRIBE_E2E") == "1"
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / ".artifacts" / "speech" / "ru-1.wav"
+FACE = ROOT / ".artifacts" / "face-test.jpg"
 PORT = 8799
 
 pytestmark = pytest.mark.skipif(
@@ -86,9 +87,16 @@ def server():
 
 
 def test_agent_transcribes_a_real_meeting(server) -> None:
+    face_param = ""
+    if FACE.is_file():
+        # Serve the photo from the fixture directory the app already exposes.
+        target = FIXTURE.parent / FACE.name
+        if not target.is_file():
+            target.write_bytes(FACE.read_bytes())
+        face_param = f"&face1=/fixtures/{target.name}"
     meeting = (
         f"http://127.0.0.1:{PORT}/fake-meeting/?peers=1"
-        f"&audio1=/fixtures/{FIXTURE.name}&name1=Анна Соколова"
+        f"&audio1=/fixtures/{FIXTURE.name}&name1=Анна Соколова{face_param}"
     )
     created = _post(
         "/api/sessions",
@@ -128,10 +136,14 @@ def test_agent_transcribes_a_real_meeting(server) -> None:
     participants = payload["participants"]
     assert any(part["display_name"] == "Анна Соколова" for part in participants), participants
 
-    # A video frame must reach the agent even without a face detector: that is
-    # what proves the __grabFace path and the video-track mapping work.
+    # A video frame must reach the agent; with a real photo in the fake meeting
+    # the YuNet detector must also report a face with a thumbnail.
     faces = {part["face_status"] for part in participants}
-    assert faces & {"frame", "detected"}, f"no video frame captured: {faces}"
+    if face_param:
+        assert "detected" in faces, f"face detector did not fire: {faces}"
+        assert any(part["face_confidence"] for part in participants)
+    else:
+        assert faces & {"frame", "detected"}, f"no video frame captured: {faces}"
 
     transcript = " ".join(segment["text"] for segment in payload["segments"]).lower()
     assert payload["segments"], f"no transcript, session state={payload['session']['state']}"

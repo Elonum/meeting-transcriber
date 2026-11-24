@@ -38,22 +38,44 @@
       const status = document.getElementById('status');
       const silence = new AudioContext();
 
-      function drawAvatar(name, hue) {
+      function makeCanvas(name, hue, faceUrl) {
         const canvas = document.createElement('canvas');
         canvas.width = 640;
         canvas.height = 480;
         const ctx = canvas.getContext('2d');
         let phase = 0;
+        let photo = null;
+        let photoReady = false;
+        if (faceUrl) {
+          photo = new Image();
+          photo.onload = () => { photoReady = true; };
+          photo.onerror = () => { photoReady = false; };
+          photo.src = faceUrl;
+        }
         const paint = () => {
           ctx.fillStyle = `hsl(${hue} 40% 18%)`;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = `hsl(${hue} 60% 70%)`;
-          ctx.beginPath();
-          ctx.arc(320 + Math.sin(phase) * 12, 200, 84, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = `hsl(${hue} 30% 12%)`;
-          ctx.font = '28px system-ui';
-          ctx.fillText(name, 40, 430);
+          if (photoReady && photo) {
+            // A real photo makes the face detector path testable end to end.
+            const scale = Math.max(canvas.width / photo.width, canvas.height / photo.height);
+            const w = photo.width * scale;
+            const h = photo.height * scale;
+            ctx.drawImage(
+              photo,
+              (canvas.width - w) / 2 + Math.sin(phase) * 6,
+              (canvas.height - h) / 2,
+              w,
+              h,
+            );
+          } else {
+            ctx.fillStyle = `hsl(${hue} 60% 70%)`;
+            ctx.beginPath();
+            ctx.arc(320 + Math.sin(phase) * 12, 200, 84, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `hsl(${hue} 30% 12%)`;
+            ctx.font = '28px system-ui';
+            ctx.fillText(name, 40, 430);
+          }
           phase += 0.2;
         };
         paint();
@@ -108,7 +130,7 @@
 
         const width = 640;
         const height = 480;
-        const canvas = drawAvatar(source.name, (index * 55) % 360);
+        const canvas = makeCanvas(source.name, (index * 55) % 360, params.get('face' + index));
         const videoTrack = canvas.captureStream(8).getVideoTracks()[0];
         const audioTrack = await audioTrackFor(source, index);
 
