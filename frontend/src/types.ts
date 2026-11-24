@@ -18,7 +18,7 @@ export interface SessionInfo {
   segments_count: number
 }
 
-export type FaceStatus = 'unknown' | 'detected' | 'none'
+export type FaceStatus = 'unknown' | 'detected' | 'none' | 'frame'
 
 export interface Participant {
   id: string
@@ -66,5 +66,8 @@ export interface CreateSessionPayload {
   meeting_url: string
   title?: string | null
   duration_min?: number | null
+  pipeline?: 'mock' | 'jazz'
   speed?: number
+  headless?: boolean
+  model?: string
 }

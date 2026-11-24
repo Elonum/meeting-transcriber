@@ -10,11 +10,27 @@
 
 | Готово | В работе |
 |---|---|
-| API, WebSocket-протокол событий, восстановление после рестарта | Агент на Playwright (вход в Jazz) |
-| Журнал событий JSONL как источник истины | ASR (GigaAM-v2 / faster-whisper) |
-| Экспорт: SRT, VTT, Markdown, TXT, JSON | Лица (InsightFace) и миниатюры в тайлах |
-| Фронтенд: сцена, лента, поиск, автоскролл, история сессий | Диаризация для случая, когда звук приходит миксом |
-| Тесты API (8) и проверки верстки (16) | Docker Compose, метрики WER/latency |
+| API, WebSocket-протокол событий, восстановление после рестарта | Детекция лиц (InsightFace, нужен Python 3.12) |
+| Журнал событий JSONL как источник истины | Проверка на реальной встрече Jazz (`spike/probe_jazz.py`) |
+| Экспорт: SRT, VTT, Markdown, TXT, JSON | Docker Compose |
+| Фронтенд: сцена, лента, поиск, автоскролл, история сессий | Метрики WER/latency в CI |
+| **Браузерный агент**: вход по ссылке, по-дорожному аудио, кадры участников | |
+| **ASR**: faster-whisper + VAD, partial/final, GPU и CPU | |
+| Тесты: 8 API + 11 VAD + сквозной тест «браузер → PCM → текст» | |
+
+### Что уже измерено на этой машине
+
+| Метрика | Значение | Условия |
+|---|---|---|
+| WER на русском | **5.3 %** | large-v3-turbo, синтезированная речь 15 с |
+| RTF (GPU) | **0.131** | RTX 3050 Laptop 4 ГБ, int8_float16 |
+| RTF (CPU) | **0.615** | int8, тот же файл |
+| Задержка финализации | **0.5–0.9 с** | 4-секундная фраза, GPU |
+| Сквозной тест | **31 с** | браузер + захват + Whisper на 15-секундной встрече |
+
+Синтезированная речь — оптимистичная оценка (нет шума, эха и перекрытий), поэтому
+на живой встрече WER будет выше; цифры нужны как точка отсчёта и как проверка, что
+пайплайн не сломался.
 
 ---
 
@@ -48,6 +64,58 @@ npm run dev          # http://127.0.0.1:5173, /api и /events уходят на 
 ```
 
 `.\scripts\dev.ps1` делает то же самое одной командой (`-Build` — сначала пересобрать фронтенд).
+
+---
+
+## Реальный режим: агент + локальный ASR
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements-ml.txt
+```
+
+В интерфейсе выберите режим **«Живая встреча (браузерный агент)»** и вставьте ссылку.
+Или через API:
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/sessions -H "Content-Type: application/json" -d '{
+  "meeting_url": "https://jazz.sber.ru/...",
+  "pipeline": "jazz",
+  "headless": true
+}'
+```
+
+Что происходит по шагам:
+
+1. Playwright открывает встречу (Edge/Chrome), подставляет имя и нажимает «Присоединиться».
+2. До загрузки скриптов страницы ставится хук на `RTCPeerConnection`, поэтому агент видит
+   каждую удалённую дорожку: отдельное аудио на участника и видео для кадров.
+3. Аудио пересэмплируется в 16 кГц внутри браузера (`AudioContext({sampleRate: 16000})`) и
+   уходит в Python пакетами по 100 мс — без ffmpeg и без временных файлов.
+4. На каждый трек работает свой `ParticipantASR`: энергетический VAD режет речь на фразы,
+   промежуточные гипотезы идут жадным декодированием, финал — beam search.
+5. Первый кадр участника попадает в тайл. Пока детектор лиц не подключён, статус честно
+   называется `frame` («кадр есть, лицо не распознано»), а не `detected`.
+
+Модель (`large-v3-turbo`, ~1.6 ГБ) скачивается в `.models/` при первом запуске. Для GPU
+достаточно колёс из `requirements-ml.txt`: ctranslate2 сам подхватит `cublas64_12.dll` и
+`cudnn64_9.dll`, полный CUDA Toolkit не нужен.
+
+### Встреча-двойник для проверки без Jazz
+
+`tools/fake_meeting/index.html` — мини-встреча: участники говорят по настоящему
+`RTCPeerConnection` внутри страницы, а звук берётся из WAV-файла.
+
+```text
+http://127.0.0.1:8000/fake-meeting/?peers=2&audio1=/fixtures/ru-1.wav&name1=Анна Соколова&audio2=/fixtures/ru-2.wav&name2=Дмитрий
+```
+
+Так проверяется весь путь, кроме самого Jazz. Если что-то не работает, начните с диагностики:
+
+```powershell
+.\.venv\Scripts\python.exe tools\debug_capture.py --seconds 15
+```
+
+Скрипт печатает дорожки, ошибки страницы, число аудиочанков и состояние хука.
 
 ---
 
@@ -157,6 +225,14 @@ npm run dev          # http://127.0.0.1:5173, /api и /events уходят на 
 # API: полный жизненный цикл, экспорты, журнал, WebSocket, идемпотентность
 cd backend; ..\.venv\Scripts\python.exe -m pytest tests -q
 
+# VAD и сегментация: синтетическое аудио, без модели и браузера
+cd backend; ..\.venv\Scripts\python.exe -m pytest tests\test_asr_detector.py -q
+
+# Сквозной тест: браузер → дорожки → PCM → VAD → Whisper → протокол.
+# Нужны браузер, скачанная модель и сгенерированный WAV (см. шапку файла теста).
+$env:TRANSCRIBE_E2E = "1"
+cd backend; ..\.venv\Scripts\python.exe -m pytest tests\test_capture_e2e.py -q
+
 # Дым против живого сервера
 .\.venv\Scripts\python.exe tools\smoke.py http://127.0.0.1:8000 8
 
@@ -169,6 +245,16 @@ cd backend; ..\.venv\Scripts\python.exe -m pytest tests -q
 
 Проверки верстки специально сделаны измерениями DOM, а не скриншотами: скриншот без сравнения
 ничего не гарантирует, а `scrollWidth > innerWidth` ловит регрессию сразу.
+
+Метрики качества — отдельным инструментом, на синтезированной речи через системный голос
+(эталон известен посимвольно):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\make_speech.ps1 `
+    -Text "Коллеги, начинаем планёрку." -Out .artifacts\speech\ru-1.wav
+.\.venv\Scripts\python.exe tools\asr_bench.py --wav .artifacts\speech\ru-1.wav `
+    --text "Коллеги, начинаем планёрку." --model large-v3-turbo --device cuda
+```
 
 ---
 
@@ -183,8 +269,13 @@ cd backend; ..\.venv\Scripts\python.exe -m pytest tests -q
 - **Ресурсы.** На 4 ГБ VRAM ASR и диаризация одновременно не живут: ASR на GPU, лица и диаризация
   на CPU или последовательно.
 - **Перекрывающаяся речь.** По дорожкам решается тривиально, на миксе — нет.
-- **Python 3.14.** Mock-пайплайн работает. Для ML-стека понадобится 3.12: у PyTorch/ctranslate2 нет
-  колёс под 3.14.
+- **Python 3.14.** ASR (faster-whisper) на нём работает — колёса `ctranslate2` под cp314 есть.
+  А вот детектор лиц нет: у `insightface` и `onnxruntime` нет колёс под 3.14, нужен отдельный
+  venv с Python 3.12. Поэтому сейчас пайплайн отдаёт статус `frame` (кадр получен, лицо не
+  распознано) и показывает реальное видео участника. Это осознанно честное состояние, а не
+  заглушка: интерфейс и протокол уже поддерживают `detected` с процентом уверенности.
+- **Шум и эхо.** Энергетический VAD не различает речь и музыку/шум; на живой встрече его
+  заменит Silero VAD (нужен torch, то есть всё тот же Python 3.12).
 
 ---
 
@@ -193,11 +284,11 @@ cd backend; ..\.venv\Scripts\python.exe -m pytest tests -q
 | Шаг | Что делаем | Критерий готовности |
 |---|---|---|
 | 1 | Спайк Jazz (`spike/probe_jazz.py`) | известно, есть ли бот-API и по-дорожному аудио |
-| 2 | `JazzPipeline`: вход по ссылке, дорожки в WAV, скриншоты тайлов | агент входит и пишет файлы |
-| 3 | ASR: VAD + faster-whisper/GigaAM по дорожкам, partial/final | текст в UI с задержкой ≤ 2.5 с |
-| 4 | Лица: InsightFace + привязка к дорожке, миниатюры в `face` | тайлы с лицами и процентами |
+| 2 | `JazzPipeline`: вход по ссылке, дорожки в PCM, кадры участников | **сделано, проверено на встрече-двойнике** |
+| 3 | ASR: VAD + faster-whisper по дорожкам, partial/final | **сделано: WER 5.3 %, RTF 0.13** |
+| 4 | Лица: InsightFace (Python 3.12), привязка к дорожке | детекция и миниатюры в `face` |
 | 5 | Микс-ветка: диаризация pyannote/эмбеддинги | работает на записи экрана и SIP |
-| 6 | Docker Compose, метрики, README с цифрами | один `docker compose up` |
+| 6 | Docker Compose, метрики в CI, демо-видео | один `docker compose up` |
 
 ---
 
@@ -208,9 +299,13 @@ backend/app/
   main.py        REST + WebSocket + раздача статики
   session.py     состояние сессии, рассылка событий, JSONL, восстановление
   protocol.py    формат событий и участников (контракт для всех слоёв)
+  capture.py     браузерный агент: вход, хук RTCPeerConnection, PCM и кадры
+  asr.py         VAD, сегментация, faster-whisper (GPU/CPU)
+  jazz.py        пайплайн: агент → ASR по дорожкам → события
+  faces.py       интерфейс детектора лиц + InsightFace (ждёт Python 3.12)
   mock.py        сценарный пайплайн для разработки и демо
   export.py      SRT / VTT / Markdown / TXT / JSON
-backend/tests/   pytest, полный цикл API на ускоренном mock
+backend/tests/   pytest: API, VAD, сквозной тест браузер→текст
 frontend/src/    React + TS: сцена, лента, формы, экспорт, WS-хук
 spike/           probe_jazz.py — проверка реальной встречи
 tools/           smoke, ui_check, shot, sitecustomize для песочницы

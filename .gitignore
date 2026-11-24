@@ -19,6 +19,9 @@ data/
 .artifacts/
 spike/out/
 
+# Model weights (downloaded on demand)
+.models/
+
 # Editors / OS
 .vscode/
 .idea/

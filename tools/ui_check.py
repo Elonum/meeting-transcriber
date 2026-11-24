@@ -55,7 +55,9 @@ def main() -> int:
         # -- start a session -------------------------------------------------
         page.fill('input[type="url"]', "https://jazz.sber.ru/meeting/ui-check")
         page.fill('input[placeholder="Планёрка по транскрибации"]', "Проверка интерфейса")
-        page.select_option("select", "1")
+        # The form has two selects: pipeline mode first, demo speed second.
+        page.select_option("select >> nth=0", "mock")
+        page.select_option("select >> nth=1", "1")
         page.click("button.primary")
 
         page.wait_for_selector(".tile", timeout=15000)

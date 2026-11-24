@@ -1,0 +1,23 @@
+# ML stack for the real ``jazz`` pipeline.
+#
+# Installed and verified on this machine (Python 3.14, RTX 3050 4 GB):
+#   faster-whisper 1.2.1 + ctranslate2 4.9.1 (cp314 wheels exist)
+#
+# GPU inference needs the CUDA runtime, but a full CUDA Toolkit is not required:
+# the wheels below ship cuBLAS and cuDNN 9 for Windows and are picked up by
+# app/asr.py:add_cuda_dll_dirs().
+-r requirements.txt
+numpy>=1.26
+faster-whisper>=1.1
+
+# --- GPU inference (Windows, ~1.2 GB) ---------------------------------------
+nvidia-cublas-cu12>=12.4
+nvidia-cudnn-cu12>=9.0
+# Linux alternative: install the CUDA runtime through the system package manager.
+
+# --- face detection (needs Python 3.12) --------------------------------------
+# no cp314 wheels yet for insightface / onnxruntime, so the pipeline falls back
+# to "frame captured, no detector". Enable these once the ML venv exists.
+# insightface>=0.7.3
+# onnxruntime-gpu>=1.18
+# pillow>=10

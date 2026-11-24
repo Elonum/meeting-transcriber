@@ -2,12 +2,4 @@ fastapi>=0.115
 uvicorn>=0.30
 websockets>=12
 python-dotenv>=1.0
-
-# --- ML / capture stack (not needed for the mock pipeline) -------------------
-# faster-whisper>=1.0        # real ASR, GPU
-# silero-vad>=5.0            # voice activity detection
-# pyannote.audio>=3.1        # blind diarization fallback (needs HF token)
-# insightface>=0.7           # face detection + ArcFace embeddings
-# onnxruntime-gpu>=1.18      # inference backend for insightface
-# playwright>=1.44           # browser agent
-# numpy>=1.26
+numpy>=1.26

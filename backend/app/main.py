@@ -73,8 +73,12 @@ class StartRequest(BaseModel):
     meeting_url: str = Field(..., description="Ссылка на встречу Jazz")
     title: str | None = Field(None, max_length=200)
     duration_min: int | None = Field(None, ge=1, le=600)
-    pipeline: Literal["mock"] = "mock"
-    speed: float = Field(1.0, ge=0.05, le=50.0, description="Ускорение для тестов и демо")
+    pipeline: Literal["mock", "jazz"] = Field(
+        "mock", description="mock — сценарная демонстрация; jazz — настоящий браузерный агент"
+    )
+    speed: float = Field(1.0, ge=0.05, le=50.0, description="Ускорение mock-пайплайна")
+    headless: bool = Field(True, description="Для jazz: показывать ли браузер")
+    model: str = Field("large-v3-turbo", description="Для jazz: модель faster-whisper")
 
     @field_validator("meeting_url")
     @classmethod
@@ -100,9 +104,16 @@ def _require(session_id: str):
 
 @app.get("/api/health")
 async def health() -> dict:
+    try:
+        import faster_whisper  # noqa: F401
+
+        asr_ready = True
+    except Exception:  # noqa: BLE001
+        asr_ready = False
     return {
         "status": "ok",
-        "pipelines": {"mock": True},
+        "pipelines": {"mock": True, "jazz": asr_ready},
+        "asr": {"faster_whisper": asr_ready},
         "sessions": len(manager.sessions),
         "data_dir": str(DATA_DIR),
         "static_ready": (STATIC_DIR / "index.html").is_file(),
@@ -116,15 +127,32 @@ async def list_sessions() -> dict:
 
 @app.post("/api/sessions", status_code=201)
 async def create_session(payload: StartRequest) -> dict:
-    pipeline = MockPipeline(payload.meeting_url, speed=payload.speed)
-    session = manager.create(
-        payload.meeting_url,
-        title=payload.title,
-        duration_min=payload.duration_min,
-        pipeline=pipeline,
-    )
-    await session.start(speed=payload.speed)
-    log.info("session %s started (pipeline=%s)", session.id, pipeline.name)
+    if payload.pipeline == "jazz":
+        from .jazz import JazzPipeline
+
+        pipeline = JazzPipeline(
+            payload.meeting_url,
+            headless=payload.headless,
+            model=payload.model,
+        )
+        session = manager.create(
+            payload.meeting_url,
+            title=payload.title,
+            duration_min=payload.duration_min,
+            pipeline=pipeline,
+        )
+        await session.start(speed=1.0)
+    else:
+        mock = MockPipeline(payload.meeting_url, speed=payload.speed)
+        session = manager.create(
+            payload.meeting_url,
+            title=payload.title,
+            duration_min=payload.duration_min,
+            pipeline=mock,
+        )
+        await session.start(speed=payload.speed)
+
+    log.info("session %s started (pipeline=%s)", session.id, session.pipeline.name)
     return session.as_dict()
 
 
@@ -218,6 +246,14 @@ async def events(socket: WebSocket, session_id: str) -> None:
     finally:
         session.unsubscribe(queue)
 
+
+if (ROOT / "tools" / "fake_meeting").is_dir():
+    # Test double for a real meeting: a local page where participants talk over
+    # an actual RTCPeerConnection mesh, so the capture path can be verified.
+    app.mount("/fake-meeting", StaticFiles(directory=ROOT / "tools" / "fake_meeting", html=True), name="fake-meeting")
+
+if (ROOT / ".artifacts" / "speech").is_dir():
+    app.mount("/fixtures", StaticFiles(directory=ROOT / ".artifacts" / "speech"), name="fixtures")
 
 if STATIC_DIR.is_dir():
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="web")

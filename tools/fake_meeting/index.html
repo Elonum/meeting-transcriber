@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fake meeting — проверка агента</title>
+    <style>
+      body { background:#0b0d12; color:#e9ecf5; font-family:system-ui,sans-serif; margin:0; padding:24px; }
+      h1 { font-size:18px; font-weight:600; margin:0 0 6px; }
+      p { color:#8e97ad; font-size:13px; margin:0 0 18px; }
+      .grid { display:flex; gap:12px; flex-wrap:wrap; }
+      .tile { width:260px; border:1px solid #242b3d; border-radius:12px; padding:10px; background:#141926; }
+      .tile[data-name]::after { content:attr(data-name); display:block; margin-top:8px; font-size:13px; }
+      video { width:100%; border-radius:8px; background:#000; }
+      .badge { color:#3fc8a8; font-size:11px; }
+    </style>
+  </head>
+  <body>
+    <h1>Тестовая встреча</h1>
+    <p id="status">Готовлю участников…</p>
+    <div class="grid" id="grid"></div>
+
+    <script>
+      // A miniature meeting: two RTCPeerConnections per participant inside one
+      // page. The agent's hook sees the same `track` events it would see in a
+      // real call, so the capture path is exercised end-to-end without Jazz.
+      const params = new URLSearchParams(location.search);
+      const peers = Number(params.get('peers') || '2');
+      const sources = [];
+      for (let i = 1; i <= peers; i += 1) {
+        const url = params.get('audio' + i);
+        if (url) sources.push({ url, name: params.get('name' + i) || ('Участник ' + i) });
+      }
+      if (!sources.length) {
+        for (let i = 1; i <= peers; i += 1) sources.push({ tone: 220 + i * 90, name: 'Участник ' + i });
+      }
+
+      const grid = document.getElementById('grid');
+      const status = document.getElementById('status');
+      const silence = new AudioContext();
+
+      function drawAvatar(name, hue) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        let phase = 0;
+        const paint = () => {
+          ctx.fillStyle = `hsl(${hue} 40% 18%)`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = `hsl(${hue} 60% 70%)`;
+          ctx.beginPath();
+          ctx.arc(320 + Math.sin(phase) * 12, 200, 84, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = `hsl(${hue} 30% 12%)`;
+          ctx.font = '28px system-ui';
+          ctx.fillText(name, 40, 430);
+          phase += 0.2;
+        };
+        paint();
+        // A canvas only produces frames while it is being drawn, so keep it
+        // animating: this is what lets the agent grab real video frames.
+        setInterval(paint, 125);
+        return canvas;
+      }
+
+      async function audioTrackFor(source, index) {
+        const ctx = new AudioContext();
+        const destination = ctx.createMediaStreamDestination();
+        // Participants start talking a few seconds after the page loads, so the
+        // agent has time to join — like a real call, and it keeps the fixture
+        // from being clipped at the start.
+        const startDelay = Number(params.get('startDelay') || '4');
+        if (source.url) {
+          const buffer = await (await fetch(source.url)).arrayBuffer();
+          const decoded = await ctx.decodeAudioData(buffer);
+          const node = ctx.createBufferSource();
+          node.buffer = decoded;
+          node.connect(destination);
+          setTimeout(() => {
+            ctx.resume().then(() => node.start()).catch(() => {});
+          }, startDelay * 1000);
+        } else {
+          const oscillator = ctx.createOscillator();
+          const gain = ctx.createGain();
+          oscillator.frequency.value = source.tone || 220;
+          gain.gain.value = 0.15;
+          oscillator.connect(gain).connect(destination);
+          setTimeout(() => {
+            ctx.resume().then(() => oscillator.start()).catch(() => {});
+          }, startDelay * 1000);
+        }
+        // Keep the graph alive while the page is open.
+        silence.resume();
+        return destination.stream.getAudioTracks()[0];
+      }
+
+      async function connectParticipant(source, index) {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        tile.dataset.name = source.name;
+        tile.dataset.participant = String(index);
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = true;
+        tile.appendChild(video);
+        grid.appendChild(tile);
+
+        const width = 640;
+        const height = 480;
+        const canvas = drawAvatar(source.name, (index * 55) % 360);
+        const videoTrack = canvas.captureStream(8).getVideoTracks()[0];
+        const audioTrack = await audioTrackFor(source, index);
+
+        const sender = new RTCPeerConnection();
+        const receiver = new RTCPeerConnection();
+        sender.onicecandidate = (event) => event.candidate && receiver.addIceCandidate(event.candidate);
+        receiver.onicecandidate = (event) => event.candidate && sender.addIceCandidate(event.candidate);
+
+        receiver.ontrack = (event) => {
+          if (event.track.kind === 'video') {
+            video.srcObject = event.streams[0];
+            video.play().catch(() => {});
+          } else if (event.track.kind === 'audio') {
+            // Plays softly so the tab is obviously alive; the agent captures the
+            // track independently of this element.
+            const probe = document.createElement('audio');
+            probe.srcObject = event.streams[0];
+            probe.volume = 0.01;
+            probe.play().catch(() => {});
+          }
+        };
+
+        const localStream = new MediaStream();
+        localStream.addTrack(audioTrack);
+        localStream.addTrack(videoTrack);
+        sender.addTrack(audioTrack, localStream);
+        sender.addTrack(videoTrack, localStream);
+        const offer = await sender.createOffer();
+        await sender.setLocalDescription(offer);
+        await receiver.setRemoteDescription(offer);
+        const answer = await receiver.createAnswer();
+        await receiver.setLocalDescription(answer);
+        await sender.setRemoteDescription(answer);
+      }
+
+      (async () => {
+        for (let i = 0; i < sources.length; i += 1) {
+          await connectParticipant(sources[i], i + 1);
+        }
+        status.textContent = 'Участников подключено: ' + sources.length;
+        status.className = 'badge';
+      })().catch((error) => {
+        status.textContent = 'Ошибка: ' + error;
+      });
+    </script>
+  </body>
+</html>

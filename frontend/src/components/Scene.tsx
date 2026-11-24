@@ -57,6 +57,11 @@ function ParticipantTile({ participant }: { participant: Participant }) {
             ◉ {confidence ? `${Math.round(confidence * 100)}%` : 'лицо'}
           </span>
         )}
+        {participant.face_status === 'frame' && (
+          <span className="tile__face tile__face--none" title="Кадр получен, детектор лиц не подключён">
+            кадр
+          </span>
+        )}
         {participant.face_status === 'none' && (
           <span className="tile__face tile__face--none" title="Камера выключена или лица нет в кадре">
             камера off

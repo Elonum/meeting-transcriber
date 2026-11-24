@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { CreateSessionPayload } from '../types'
 
+type Mode = 'mock' | 'jazz'
+
 interface NewSessionFormProps {
   busy: boolean
   onCreate: (payload: CreateSessionPayload) => Promise<void>
@@ -12,7 +14,11 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
   const [title, setTitle] = useState('')
   const [duration, setDuration] = useState('')
   const [speed, setSpeed] = useState('1')
+  const [mode, setMode] = useState<Mode>('mock')
+  const [showBrowser, setShowBrowser] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const live = mode === 'jazz'
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -26,7 +32,9 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
         meeting_url: url.trim(),
         title: title.trim() || null,
         duration_min: duration ? Number(duration) : null,
-        speed: Number(speed),
+        pipeline: mode,
+        speed: live ? 1 : Number(speed),
+        headless: !showBrowser,
       })
       setUrl('')
       setTitle('')
@@ -39,7 +47,11 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
   return (
     <form className="card form" onSubmit={submit}>
       <h2 className="card__title">Новая встреча</h2>
-      <p className="card__hint">Агент войдёт по ссылке и начнёт транскрибацию.</p>
+      <p className="card__hint">
+        {live
+          ? 'Агент откроет встречу в браузере, будет слушать каждого участника отдельно и распознавать речь локально.'
+          : 'Агент войдёт по ссылке и начнёт транскрибацию.'}
+      </p>
 
       <label className="field">
         <span>Ссылка на встречу</span>
@@ -50,6 +62,14 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
           onChange={(event) => setUrl(event.target.value)}
           required
         />
+      </label>
+
+      <label className="field">
+        <span>Режим</span>
+        <select value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
+          <option value="mock">Демо-сценарий (без подключения)</option>
+          <option value="jazz">Живая встреча (браузерный агент)</option>
+        </select>
       </label>
 
       <label className="field">
@@ -75,15 +95,36 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
           />
         </label>
 
-        <label className="field">
-          <span>Темп демо</span>
-          <select value={speed} onChange={(event) => setSpeed(event.target.value)}>
-            <option value="1">1× реальное время</option>
-            <option value="4">4× быстрее</option>
-            <option value="10">10× быстрее</option>
-          </select>
-        </label>
+        {live ? (
+          <label className="field field--check">
+            <span>Браузер</span>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={showBrowser}
+                onChange={(event) => setShowBrowser(event.target.checked)}
+              />
+              <span>показывать окно</span>
+            </label>
+          </label>
+        ) : (
+          <label className="field">
+            <span>Темп демо</span>
+            <select value={speed} onChange={(event) => setSpeed(event.target.value)}>
+              <option value="1">1× реальное время</option>
+              <option value="4">4× быстрее</option>
+              <option value="10">10× быстрее</option>
+            </select>
+          </label>
+        )}
       </div>
+
+      {live && (
+        <p className="form__note">
+          Речь распознаётся локально (faster-whisper), звук никуда не уходит. Первый запуск
+          подгружает модель и занимает до минуты.
+        </p>
+      )}
 
       {error && <p className="form__error">{error}</p>}
 
