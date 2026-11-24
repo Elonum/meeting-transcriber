@@ -267,6 +267,23 @@ class BrowserAgent:
         self._tracks: dict[str, TrackInfo] = {}
         self.track_events: asyncio.Queue[TrackInfo] = asyncio.Queue()
         self.notes: list[str] = []
+        self.crashed = False
+        self.crash_reason: str | None = None
+
+    def _mark_crashed(self, reason: str) -> None:
+        """A closed or crashed page can never produce audio again."""
+        if self.crashed:
+            return
+        self.crashed = True
+        self.crash_reason = reason
+        self.notes.append(f"agent: {reason}")
+        log.warning("agent: %s", reason)
+
+    def is_alive(self) -> bool:
+        if self.crashed:
+            return False
+        page = self.page
+        return page is not None and not page.is_closed()
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -302,6 +319,8 @@ class BrowserAgent:
         )
         self.page = await self._context.new_page()
         self.page.on("pageerror", lambda error: self.notes.append(f"pageerror: {error}"))
+        self.page.on("crash", lambda *_: self._mark_crashed("page crashed"))
+        self.page.on("close", lambda *_: self._mark_crashed("page closed"))
         self.page.on(
             "console",
             lambda message: self.notes.append(f"console.{message.type}: {message.text}")

@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        # 1 enables the Playwright browser inside the image (heavy, ~400 MB).
+        INSTALL_BROWSER: "${INSTALL_BROWSER:-0}"
+    image: meeting-transcriber:local
+    ports:
+      - "8000:8000"
+    environment:
+      TRANSCRIBE_DATA_DIR: /data
+      HF_HOME: /models
+      HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    restart: unless-stopped
+    # CPU inference by default. For GPU on Linux, add:
+    #   deploy:
+    #     resources:
+    #       reservations:
+    #         devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]

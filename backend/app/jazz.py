@@ -34,6 +34,7 @@ class JazzPipeline:
         device: str = "auto",
         language: str = "ru",
         partial_interval_ms: int = 1200,
+        agent: BrowserAgent | None = None,
     ) -> None:
         self.meeting_url = meeting_url
         self.headless = headless
@@ -43,7 +44,8 @@ class JazzPipeline:
         self.language = language
         self.partial_interval_ms = partial_interval_ms
 
-        self.agent = BrowserAgent(meeting_url, headless=headless, channel=channel)
+        # Injectable so the failure paths can be tested without a browser.
+        self.agent = agent or BrowserAgent(meeting_url, headless=headless, channel=channel)
         self.runner = get_runner(model, device=device, language=language)
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
@@ -100,12 +102,26 @@ class JazzPipeline:
 
         self._clock_start = started
         reader = asyncio.create_task(self._read_audio())
+        lost_browser = False
         try:
             while True:
                 if deadline_ms is not None and p.now_ms() - started >= deadline_ms:
                     await emit(p.ev_done(at(), "deadline"))
                     break
                 await asyncio.sleep(0.5)
+                if not self.agent.is_alive():
+                    # Hanging here would look like a frozen demo: the browser is
+                    # gone and no audio will ever arrive again.
+                    lost_browser = True
+                    await emit(
+                        p.ev_notice(
+                            at(),
+                            f"Браузер агента закрылся ({self.agent.crash_reason or 'страница недоступна'}) — "
+                            "транскрибация прервана.",
+                            "warn",
+                        )
+                    )
+                    break
                 if reader.done():
                     break
         finally:
@@ -125,6 +141,9 @@ class JazzPipeline:
                     ),
                 )
             )
+
+        if lost_browser:
+            raise RuntimeError("браузер агента закрылся или упал — сессия прервана")
 
     async def _flush(self, at: Any) -> None:
         for track_id, asr in self._asr.items():

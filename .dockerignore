@@ -1,0 +1,16 @@
+.git
+.venv
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/.npm-cache
+data
+.tmp
+.artifacts
+.models
+spike/out
+__pycache__
+*.pyc
+.pytest_cache
+docs
+README.md
