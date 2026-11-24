@@ -73,6 +73,7 @@ class JazzPipeline:
         try:
             await self.agent.start()
         except Exception as error:  # noqa: BLE001 - surfaced to the UI
+            await self._screenshot(at(), "join-failed")
             await emit(
                 p.ev_notice(
                     at(),
@@ -82,12 +83,17 @@ class JazzPipeline:
             )
             raise
 
+        for note in self.agent.notes[-6:]:
+            await emit(p.ev_notice(at(), f"Вход: {note}"))
+
         if not self.agent._tracks:
+            shot = await self._screenshot(at(), "no-tracks")
             await emit(
                 p.ev_notice(
                     at(),
                     "Агент вошёл, но медиапотоков нет: возможно, встреча ждёт в лобби, "
-                    "требует входа по SSO или никто ещё не включил микрофон.",
+                    "требует входа по SSO или никто ещё не включил микрофон."
+                    + (f" Скриншот страницы: {shot}" if shot else ""),
                     "warn",
                 )
             )
@@ -124,6 +130,24 @@ class JazzPipeline:
         for track_id, asr in self._asr.items():
             events = await asyncio.to_thread(asr.flush)
             await self._publish(track_id, events, at)
+
+    def set_artifacts_dir(self, path: Any) -> None:
+        """Where to drop diagnostic screenshots (used by the API layer)."""
+        self._artifacts_dir = path
+
+    async def _screenshot(self, at: Any, reason: str) -> str | None:
+        """Save what the page looked like — the fastest way to explain a failed join."""
+        directory = getattr(self, "_artifacts_dir", None)
+        if directory is None:
+            return None
+        try:
+            target = directory / f"agent-{reason}.png"
+            await self.agent.screenshot(str(target))
+            log.info("agent screenshot: %s", target)
+            return target.name
+        except Exception:  # noqa: BLE001 - diagnostics must never break the session
+            log.debug("screenshot failed", exc_info=True)
+            return None
     # -- audio path ----------------------------------------------------------
 
     async def _read_audio(self) -> None:

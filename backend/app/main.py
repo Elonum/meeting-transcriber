@@ -187,6 +187,10 @@ async def create_session(payload: StartRequest) -> dict:
             "speed": payload.speed,
         },
     )
+    # Give the agent somewhere to save a screenshot when the join goes wrong.
+    setter = getattr(session.pipeline, "set_artifacts_dir", None)
+    if callable(setter):
+        setter(session.dir)
     await session.start(speed=payload.speed)
 
     log.info(
