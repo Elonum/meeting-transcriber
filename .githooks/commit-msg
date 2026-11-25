@@ -1,0 +1,28 @@
+#!/bin/sh
+# Enforce the subject format from CONTRIBUTING.md before a commit is created.
+# Install once with:  git config core.hooksPath .githooks
+set -eu
+
+message_file="$1"
+subject=$(head -n 1 "$message_file")
+
+pattern='^(feat|fix|docs|test|refactor|perf|build|ci|chore|style)(\([a-z0-9-]+\))?: [a-z0-9].{0,66}$'
+
+if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
+    printf '%s\n' "commit subject does not follow CONTRIBUTING.md" >&2
+    printf '%s\n' "  got: $subject" >&2
+    printf '%s\n' "  expected: <type>(<scope>): <lowercase description>, up to 72 chars" >&2
+    exit 1
+fi
+
+if printf '%s' "$subject" | grep -Eq '\.$'; then
+    printf '%s\n' "commit subject must not end with a period" >&2
+    exit 1
+fi
+
+if [ "${#subject}" -gt 72 ]; then
+    printf '%s\n' "commit subject is ${#subject} chars, the limit is 72" >&2
+    exit 1
+fi
+
+exit 0

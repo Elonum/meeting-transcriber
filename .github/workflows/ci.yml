@@ -53,3 +53,31 @@ jobs:
 
       - name: typecheck and build
         run: npm run build
+
+  commit-messages:
+    name: commit message format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same rule as .githooks/commit-msg, so the convention cannot drift when
+      # someone commits from an environment without the hook installed.
+      - name: check subjects
+        shell: bash
+        run: |
+          pattern='^(feat|fix|docs|test|refactor|perf|build|ci|chore|style)(\([a-z0-9-]+\))?: [a-z0-9].{0,66}$'
+          failed=0
+          while IFS= read -r subject; do
+            if ! printf '%s' "$subject" | grep -Eq "$pattern"; then
+              printf 'bad commit subject: %s\n' "$subject"
+              failed=1
+            fi
+            if [ "${#subject}" -gt 72 ]; then
+              printf 'subject longer than 72 chars: %s\n' "$subject"
+              failed=1
+            fi
+          done < <(git log --format=%s)
+          exit $failed
+
