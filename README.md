@@ -62,7 +62,7 @@
 ```powershell
 # 1. Зависимости бэкенда (Python 3.12+; mock-пайплайн работает и на 3.14)
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
 
 # 2. Фронтенд
 cd frontend
@@ -71,13 +71,57 @@ npm run build
 cd ..
 
 # 3. Запуск
-cd backend
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\scripts\dev.cmd
 ```
 
-Откройте <http://127.0.0.1:8000>, вставьте любую ссылку вида `https://salutejazz.ru/<ссылка-из-приложения>`,
+Откройте <http://127.0.0.1:8000>, вставьте ссылку вида `https://salutejazz.ru/<ссылка-из-приложения>`,
 нажмите «Подключить агента». Через пару секунд появятся участники, лица и текст.
 Документация API — <http://127.0.0.1:8000/docs>.
+
+### После перезагрузки
+
+Сервер — обычный процесс и сам не поднимается: после включения компьютера его нужно запустить
+снова. Одна команда из корня репозитория:
+
+```powershell
+.\scripts\dev.cmd
+```
+
+`dev.cmd` — тонкая обёртка над `scripts\dev.ps1`, которая запускает PowerShell с
+`-ExecutionPolicy Bypass`. Это важно: при политике `RemoteSigned`/`AllSigned` прямой вызов
+`.\scripts\dev.ps1` может быть заблокирован («файл не имеет цифровой подписи»). Если политика
+уже разрешает локальные скрипты, можно вызывать `.\scripts\dev.ps1` напрямую.
+
+Полезные ключи:
+
+```powershell
+.\scripts\dev.cmd -Build       # пересобрать фронтенд и запустить
+.\scripts\dev.cmd -Web         # плюс Vite с hot reload (http://127.0.0.1:5173)
+.\scripts\dev.cmd -Port 8010   # другой порт
+.\scripts\dev.cmd -NoReload    # без перезапуска при правках Python
+```
+
+Ctrl+C останавливает сервер. Порт занят чужой копией — `Get-Process python | Stop-Process` или
+`netstat -ano | findstr :8000`.
+
+> **Важно про фронтенд.** Без `-Web` сервер отдаёт **последнюю собранную** версию из
+> `frontend/dist`. Если правили React и не пересобрали — в браузере будет старая страница.
+> Лечится `-Build` (или `-Web` для hot reload).
+
+### Запуск из PyCharm
+
+1. **Interpreter:** Settings → Project → Python Interpreter → Add → Existing → `.venv\Scripts\python.exe`.
+2. **Run configuration** (Run → Edit Configurations → `+` → Python):
+   - *Module name* (не Script path): `uvicorn`
+   - *Parameters*: `app.main:app --host 127.0.0.1 --port 8000 --reload`
+   - *Working directory*: `<репозиторий>\backend`
+   - *Environment variables*: `PYTHONUNBUFFERED=1`, при желании `HF_HOME=<репозиторий>\.models`
+3. В репозитории уже лежит готовая конфигурация `.run/api (uvicorn --reload).run.xml` —
+   PyCharm подхватывает её автоматически. Если он подсветил поле Module, выберите модуль проекта
+   вручную: имя модуля совпадает с именем папки проекта.
+
+PyCharm Professional умеет то же самое через готовый шаблон **FastAPI**: достаточно указать
+`backend/app/main.py`, остальное он подставит сам. В Community используйте конфигурацию выше.
 
 Для разработки фронтенда удобнее Vite с проксированием:
 
@@ -85,8 +129,6 @@ cd backend
 cd frontend
 npm run dev          # http://127.0.0.1:5173, /api и /events уходят на :8000
 ```
-
-`.\scripts\dev.ps1` делает то же самое одной командой (`-Build` — сначала пересобрать фронтенд).
 
 ---
 
