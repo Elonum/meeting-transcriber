@@ -29,12 +29,13 @@ class JazzPipeline:
         meeting_url: str,
         *,
         headless: bool = True,
-        channel: str | None = "msedge",
+        channel: str | None = "chrome",
         model: str = "large-v3-turbo",
         device: str = "auto",
         language: str = "ru",
         partial_interval_ms: int = 1200,
         agent: BrowserAgent | None = None,
+        password: str | None = None,
     ) -> None:
         self.meeting_url = meeting_url
         self.headless = headless
@@ -43,9 +44,12 @@ class JazzPipeline:
         self.device = device
         self.language = language
         self.partial_interval_ms = partial_interval_ms
+        self.password = password
 
         # Injectable so the failure paths can be tested without a browser.
-        self.agent = agent or BrowserAgent(meeting_url, headless=headless, channel=channel)
+        self.agent = agent or BrowserAgent(
+            meeting_url, headless=headless, channel=channel, password=password
+        )
         self.runner = get_runner(model, device=device, language=language)
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
@@ -190,13 +194,16 @@ class JazzPipeline:
         self._index += 1
         participant_id = f"p-{self._index}"
         self._participants[track_id] = participant_id
+        # The agent may have learned the real name after the audio started.
+        info = self.agent._tracks.get(track_id)
+        resolved = (info.name if info and info.name else "") or name
         self._asr[track_id] = ParticipantASR(
             participant_id,
             self.runner,
             partial_interval_ms=self.partial_interval_ms,
         )
         participant = p.new_participant(
-            participant_id, name or f"Участник {self._index}", color_index=self._index
+            participant_id, resolved or f"Участник {self._index}", color_index=self._index
         )
         participant["joined_at_ms"] = p.now_ms() - self._clock_start
         await self._emit(p.ev_participant(p.now_ms() - self._clock_start, participant))

@@ -1,0 +1,175 @@
+{"type": "session", "at_ms": 1, "state": "connecting"}
+{"type": "session", "at_ms": 2, "state": "live"}
+{"type": "notice", "at_ms": 0, "level": "info", "message": "Демо-режим: транскрипт сформирован mock-пайплайном. События, протокол и экспорт — настоящие."}
+{"type": "participant", "at_ms": 1, "participant": {"id": "p-agent", "display_name": "Ассистент (бот)", "role": "bot", "has_video": false, "color": "#6c8cff", "speaking": false, "face_status": "unknown", "face_confidence": null, "thumbnail": null, "joined_at_ms": 0}}
+{"type": "participant", "at_ms": 21, "participant": {"id": "p-anna", "display_name": "Анна Соколова", "role": "human", "has_video": true, "color": "#3fc8a8", "speaking": false, "face_status": "unknown", "face_confidence": null, "thumbnail": null, "joined_at_ms": 21}}
+{"type": "face", "at_ms": 37, "participant_id": "p-anna", "status": "detected", "confidence": 0.943}
+{"type": "participant", "at_ms": 53, "participant": {"id": "p-dmitry", "display_name": "Дмитрий Лебедев", "role": "human", "has_video": true, "color": "#f0a84c", "speaking": false, "face_status": "unknown", "face_confidence": null, "thumbnail": null, "joined_at_ms": 53}}
+{"type": "face", "at_ms": 68, "participant_id": "p-dmitry", "status": "detected", "confidence": 0.932}
+{"type": "participant", "at_ms": 84, "participant": {"id": "p-irina", "display_name": "Ирина Ким", "role": "human", "has_video": true, "color": "#e3688f", "speaking": false, "face_status": "unknown", "face_confidence": null, "thumbnail": null, "joined_at_ms": 84}}
+{"type": "face", "at_ms": 100, "participant_id": "p-irina", "status": "detected", "confidence": 0.973}
+{"type": "speech", "at_ms": 131, "participant_id": "p-anna", "speaking": true}
+{"type": "segment", "at_ms": 131, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 131, "text": "Коллеги,", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 146, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 146, "text": "Коллеги, начинаем.", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 159, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 159, "text": "Коллеги, начинаем. Задача", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 177, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 177, "text": "Коллеги, начинаем. Задача —", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 193, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 193, "text": "Коллеги, начинаем. Задача — подключить", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 209, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 209, "text": "Коллеги, начинаем. Задача — подключить транскрибацию", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 224, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 224, "text": "Коллеги, начинаем. Задача — подключить транскрибацию к", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 240, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 240, "text": "Коллеги, начинаем. Задача — подключить транскрибацию к встречам", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 255, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 255, "text": "Коллеги, начинаем. Задача — подключить транскрибацию к встречам в", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 264, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 264, "text": "Коллеги, начинаем. Задача — подключить транскрибацию к встречам в Jazz.", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 286, "segment": {"id": "p-anna-0", "participant_id": "p-anna", "start_ms": 131, "end_ms": 286, "text": "Коллеги, начинаем. Задача — подключить транскрибацию к встречам в Jazz.", "final": true, "confidence": 0.941, "revision": 10}}
+{"type": "speech", "at_ms": 286, "participant_id": "p-anna", "speaking": false}
+{"type": "speech", "at_ms": 301, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 301, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 301, "text": "Агент", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 317, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 317, "text": "Агент заходит", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 332, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 332, "text": "Агент заходит по", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 347, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 347, "text": "Агент заходит по ссылке", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 363, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 363, "text": "Агент заходит по ссылке как", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 379, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 379, "text": "Агент заходит по ссылке как обычный", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 394, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 394, "text": "Агент заходит по ссылке как обычный участник,", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 410, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 410, "text": "Агент заходит по ссылке как обычный участник, поэтому", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 421, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 421, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 441, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 441, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ к", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 457, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 457, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ к API", "final": false, "confidence": null, "revision": 11}}
+{"type": "segment", "at_ms": 473, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 473, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ к API не", "final": false, "confidence": null, "revision": 12}}
+{"type": "segment", "at_ms": 488, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 488, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ к API не обязателен.", "final": false, "confidence": null, "revision": 13}}
+{"type": "segment", "at_ms": 504, "segment": {"id": "p-dmitry-1", "participant_id": "p-dmitry", "start_ms": 301, "end_ms": 504, "text": "Агент заходит по ссылке как обычный участник, поэтому доступ к API не обязателен.", "final": true, "confidence": 0.933, "revision": 13}}
+{"type": "speech", "at_ms": 504, "participant_id": "p-dmitry", "speaking": false}
+{"type": "speech", "at_ms": 520, "participant_id": "p-anna", "speaking": true}
+{"type": "segment", "at_ms": 521, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 521, "text": "Хорошо.", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 535, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 535, "text": "Хорошо. Что", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 550, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 550, "text": "Хорошо. Что с", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 566, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 566, "text": "Хорошо. Что с задержкой", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 579, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 579, "text": "Хорошо. Что с задержкой распознавания?", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 598, "segment": {"id": "p-anna-2", "participant_id": "p-anna", "start_ms": 520, "end_ms": 598, "text": "Хорошо. Что с задержкой распознавания?", "final": true, "confidence": 0.968, "revision": 5}}
+{"type": "speech", "at_ms": 598, "participant_id": "p-anna", "speaking": false}
+{"type": "speech", "at_ms": 613, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 614, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 614, "text": "Сейчас", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 630, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 630, "text": "Сейчас около", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 645, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 645, "text": "Сейчас около полутора", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 661, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 661, "text": "Сейчас около полутора секунд", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 676, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 676, "text": "Сейчас около полутора секунд от", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 684, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 685, "text": "Сейчас около полутора секунд от конца", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 707, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 707, "text": "Сейчас около полутора секунд от конца фразы", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 723, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 723, "text": "Сейчас около полутора секунд от конца фразы до", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 737, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 737, "text": "Сейчас около полутора секунд от конца фразы до финального", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 754, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 754, "text": "Сейчас около полутора секунд от конца фразы до финального текста.", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 770, "segment": {"id": "p-dmitry-3", "participant_id": "p-dmitry", "start_ms": 613, "end_ms": 770, "text": "Сейчас около полутора секунд от конца фразы до финального текста.", "final": true, "confidence": 0.98, "revision": 10}}
+{"type": "speech", "at_ms": 771, "participant_id": "p-dmitry", "speaking": false}
+{"type": "speech", "at_ms": 786, "participant_id": "p-irina", "speaking": true}
+{"type": "segment", "at_ms": 786, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 786, "text": "Для", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 802, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 802, "text": "Для демонстрации", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 817, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 817, "text": "Для демонстрации этого", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 833, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 833, "text": "Для демонстрации этого достаточно,", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 844, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 844, "text": "Для демонстрации этого достаточно, но", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 864, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 864, "text": "Для демонстрации этого достаточно, но в", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 880, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 880, "text": "Для демонстрации этого достаточно, но в интерфейсе", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 895, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 895, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 911, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 911, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит показать", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 926, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 926, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит показать промежуточный", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 942, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 942, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит показать промежуточный текст", "final": false, "confidence": null, "revision": 11}}
+{"type": "segment", "at_ms": 950, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 950, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит показать промежуточный текст серым.", "final": false, "confidence": null, "revision": 12}}
+{"type": "segment", "at_ms": 973, "segment": {"id": "p-irina-4", "participant_id": "p-irina", "start_ms": 786, "end_ms": 973, "text": "Для демонстрации этого достаточно, но в интерфейсе стоит показать промежуточный текст серым.", "final": true, "confidence": 0.977, "revision": 12}}
+{"type": "speech", "at_ms": 974, "participant_id": "p-irina", "speaking": false}
+{"type": "speech", "at_ms": 989, "participant_id": "p-anna", "speaking": true}
+{"type": "segment", "at_ms": 989, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 989, "text": "Согласна.", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1001, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1001, "text": "Согласна. Дмитрий,", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1019, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1019, "text": "Согласна. Дмитрий, а", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1035, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1035, "text": "Согласна. Дмитрий, а как", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1050, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1050, "text": "Согласна. Дмитрий, а как определяется,", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1066, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1066, "text": "Согласна. Дмитрий, а как определяется, кто", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1082, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1082, "text": "Согласна. Дмитрий, а как определяется, кто говорит?", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 1098, "segment": {"id": "p-anna-5", "participant_id": "p-anna", "start_ms": 988, "end_ms": 1098, "text": "Согласна. Дмитрий, а как определяется, кто говорит?", "final": true, "confidence": 0.989, "revision": 7}}
+{"type": "speech", "at_ms": 1098, "participant_id": "p-anna", "speaking": false}
+{"type": "speech", "at_ms": 1108, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 1108, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1108, "text": "Мы", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1128, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1128, "text": "Мы не", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1144, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1144, "text": "Мы не угадываем", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1159, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1159, "text": "Мы не угадываем спикера,", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1174, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1174, "text": "Мы не угадываем спикера, а", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1191, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1191, "text": "Мы не угадываем спикера, а берём", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1206, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1206, "text": "Мы не угадываем спикера, а берём его", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 1215, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1215, "text": "Мы не угадываем спикера, а берём его из", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 1237, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1237, "text": "Мы не угадываем спикера, а берём его из отдельной", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 1253, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1253, "text": "Мы не угадываем спикера, а берём его из отдельной аудиодорожки", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 1266, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1266, "text": "Мы не угадываем спикера, а берём его из отдельной аудиодорожки участника.", "final": false, "confidence": null, "revision": 11}}
+{"type": "segment", "at_ms": 1284, "segment": {"id": "p-dmitry-6", "participant_id": "p-dmitry", "start_ms": 1108, "end_ms": 1284, "text": "Мы не угадываем спикера, а берём его из отдельной аудиодорожки участника.", "final": true, "confidence": 0.97, "revision": 11}}
+{"type": "speech", "at_ms": 1284, "participant_id": "p-dmitry", "speaking": false}
+{"type": "speech", "at_ms": 1300, "participant_id": "p-irina", "speaking": true}
+{"type": "segment", "at_ms": 1300, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1300, "text": "Тогда", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1315, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1315, "text": "Тогда и", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1331, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1331, "text": "Тогда и лица", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1347, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1347, "text": "Тогда и лица можно", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1362, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1362, "text": "Тогда и лица можно привязать", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1371, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1371, "text": "Тогда и лица можно привязать к", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1393, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1393, "text": "Тогда и лица можно привязать к тем", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 1408, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1408, "text": "Тогда и лица можно привязать к тем же", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 1424, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1424, "text": "Тогда и лица можно привязать к тем же дорожкам.", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 1439, "segment": {"id": "p-irina-7", "participant_id": "p-irina", "start_ms": 1300, "end_ms": 1439, "text": "Тогда и лица можно привязать к тем же дорожкам.", "final": true, "confidence": 0.978, "revision": 9}}
+{"type": "speech", "at_ms": 1440, "participant_id": "p-irina", "speaking": false}
+{"type": "speech", "at_ms": 1455, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 1456, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1456, "text": "Именно.", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1471, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1471, "text": "Именно. Кадр", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1488, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1488, "text": "Именно. Кадр из", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1503, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1503, "text": "Именно. Кадр из видеопотока", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1518, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1518, "text": "Именно. Кадр из видеопотока участника", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1530, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1530, "text": "Именно. Кадр из видеопотока участника даёт", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1550, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1550, "text": "Именно. Кадр из видеопотока участника даёт лицо", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 1566, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1566, "text": "Именно. Кадр из видеопотока участника даёт лицо без", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 1582, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1582, "text": "Именно. Кадр из видеопотока участника даёт лицо без отдельной", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 1597, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1597, "text": "Именно. Кадр из видеопотока участника даёт лицо без отдельной базы.", "final": false, "confidence": null, "revision": 10}}
+{"type": "segment", "at_ms": 1613, "segment": {"id": "p-dmitry-8", "participant_id": "p-dmitry", "start_ms": 1455, "end_ms": 1613, "text": "Именно. Кадр из видеопотока участника даёт лицо без отдельной базы.", "final": true, "confidence": 0.93, "revision": 10}}
+{"type": "speech", "at_ms": 1613, "participant_id": "p-dmitry", "speaking": false}
+{"type": "speech", "at_ms": 1628, "participant_id": "p-anna", "speaking": true}
+{"type": "segment", "at_ms": 1629, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1629, "text": "Отлично.", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1644, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1644, "text": "Отлично. Что", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1660, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1660, "text": "Отлично. Что осталось", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1676, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1676, "text": "Отлично. Что осталось до", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1688, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1688, "text": "Отлично. Что осталось до конца", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1707, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1707, "text": "Отлично. Что осталось до конца недели?", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1722, "segment": {"id": "p-anna-9", "participant_id": "p-anna", "start_ms": 1628, "end_ms": 1722, "text": "Отлично. Что осталось до конца недели?", "final": true, "confidence": 0.965, "revision": 6}}
+{"type": "speech", "at_ms": 1722, "participant_id": "p-anna", "speaking": false}
+{"type": "speech", "at_ms": 1737, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 1738, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1738, "text": "Экспорт", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1753, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1753, "text": "Экспорт в", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1768, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1768, "text": "Экспорт в субтитры,", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1784, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1784, "text": "Экспорт в субтитры, журнал", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1794, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1794, "text": "Экспорт в субтитры, журнал событий", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1816, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1816, "text": "Экспорт в субтитры, журнал событий и", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1831, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1831, "text": "Экспорт в субтитры, журнал событий и подключение", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 1847, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1847, "text": "Экспорт в субтитры, журнал событий и подключение настоящего", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 1863, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1863, "text": "Экспорт в субтитры, журнал событий и подключение настоящего распознавания.", "final": false, "confidence": null, "revision": 9}}
+{"type": "segment", "at_ms": 1878, "segment": {"id": "p-dmitry-10", "participant_id": "p-dmitry", "start_ms": 1737, "end_ms": 1878, "text": "Экспорт в субтитры, журнал событий и подключение настоящего распознавания.", "final": true, "confidence": 0.935, "revision": 9}}
+{"type": "speech", "at_ms": 1878, "participant_id": "p-dmitry", "speaking": false}
+{"type": "speech", "at_ms": 1893, "participant_id": "p-irina", "speaking": true}
+{"type": "segment", "at_ms": 1893, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1893, "text": "И", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 1908, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1908, "text": "И проверка", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 1924, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1924, "text": "И проверка на", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 1940, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1940, "text": "И проверка на реальной", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 1952, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1952, "text": "И проверка на реальной встрече", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 1971, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1971, "text": "И проверка на реальной встрече в", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 1987, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 1987, "text": "И проверка на реальной встрече в Jazz.", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 2003, "segment": {"id": "p-irina-11", "participant_id": "p-irina", "start_ms": 1893, "end_ms": 2003, "text": "И проверка на реальной встрече в Jazz.", "final": true, "confidence": 0.932, "revision": 7}}
+{"type": "speech", "at_ms": 2003, "participant_id": "p-irina", "speaking": false}
+{"type": "speech", "at_ms": 2018, "participant_id": "p-anna", "speaking": true}
+{"type": "segment", "at_ms": 2018, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2018, "text": "Тогда", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 2034, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2034, "text": "Тогда фиксируем:", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 2050, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2050, "text": "Тогда фиксируем: демо", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 2058, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2058, "text": "Тогда фиксируем: демо в", "final": false, "confidence": null, "revision": 4}}
+{"type": "segment", "at_ms": 2080, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2080, "text": "Тогда фиксируем: демо в пятницу,", "final": false, "confidence": null, "revision": 5}}
+{"type": "segment", "at_ms": 2096, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2096, "text": "Тогда фиксируем: демо в пятницу, я", "final": false, "confidence": null, "revision": 6}}
+{"type": "segment", "at_ms": 2111, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2111, "text": "Тогда фиксируем: демо в пятницу, я приглашаю", "final": false, "confidence": null, "revision": 7}}
+{"type": "segment", "at_ms": 2126, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2126, "text": "Тогда фиксируем: демо в пятницу, я приглашаю заказчика.", "final": false, "confidence": null, "revision": 8}}
+{"type": "segment", "at_ms": 2141, "segment": {"id": "p-anna-12", "participant_id": "p-anna", "start_ms": 2018, "end_ms": 2142, "text": "Тогда фиксируем: демо в пятницу, я приглашаю заказчика.", "final": true, "confidence": 0.964, "revision": 8}}
+{"type": "speech", "at_ms": 2142, "participant_id": "p-anna", "speaking": false}
+{"type": "speech", "at_ms": 2157, "participant_id": "p-dmitry", "speaking": true}
+{"type": "segment", "at_ms": 2158, "segment": {"id": "p-dmitry-13", "participant_id": "p-dmitry", "start_ms": 2157, "end_ms": 2158, "text": "Принято,", "final": false, "confidence": null, "revision": 1}}
+{"type": "segment", "at_ms": 2173, "segment": {"id": "p-dmitry-13", "participant_id": "p-dmitry", "start_ms": 2157, "end_ms": 2173, "text": "Принято, готовлю", "final": false, "confidence": null, "revision": 2}}
+{"type": "segment", "at_ms": 2189, "segment": {"id": "p-dmitry-13", "participant_id": "p-dmitry", "start_ms": 2157, "end_ms": 2189, "text": "Принято, готовлю стенд.", "final": false, "confidence": null, "revision": 3}}
+{"type": "segment", "at_ms": 2205, "segment": {"id": "p-dmitry-13", "participant_id": "p-dmitry", "start_ms": 2157, "end_ms": 2205, "text": "Принято, готовлю стенд.", "final": true, "confidence": 0.939, "revision": 3}}
+{"type": "speech", "at_ms": 2205, "participant_id": "p-dmitry", "speaking": false}
+{"type": "notice", "at_ms": 2206, "level": "info", "message": "Встреча завершена. Транскрипт доступен для экспорта."}
+{"type": "done", "at_ms": 2208, "reason": "completed"}
+{"type": "session", "at_ms": 2208, "state": "finished"}

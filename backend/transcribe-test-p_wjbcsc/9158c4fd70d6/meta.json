@@ -1,0 +1,19 @@
+{
+  "id": "9158c4fd70d6",
+  "title": "Встреча",
+  "meeting_url": "https://jazz.sber.ru/meeting/abc-defg-hij",
+  "pipeline": "mock",
+  "started_at_ms": 1795628449193,
+  "created_at_ms": 1795628446186,
+  "start_at_ms": 1795628449184,
+  "duration_min": null,
+  "options": {
+    "pipeline": "mock",
+    "headless": true,
+    "model": "large-v3-turbo",
+    "speed": 30.0,
+    "password": null
+  },
+  "state": "finished",
+  "error": null
+}

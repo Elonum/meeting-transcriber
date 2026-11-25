@@ -39,6 +39,40 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+#: Enough of a browser to be indistinguishable from a human, plus synthetic media
+#: so no hardware is needed. ``--enable-automation`` is removed at launch time
+#: (see ``ignore_default_args``) because the SaluteJazz client checks for it.
+LAUNCH_ARGS = [
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    "--autoplay-policy=no-user-gesture-required",
+    "--disable-blink-features=AutomationControlled",
+]
+
+#: Runs before any page script: hides the automation marker and pre-sets the web
+#: client's own bypass flag. Without both, SaluteJazz shows "браузер не
+#: поддерживается" and only offers to open the desktop app.
+PRELUDE_JS = """
+try { Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); } catch (e) {}
+try { sessionStorage.setItem('s2b.browserChecker.skipChecking', 'true'); } catch (e) {}
+"""
+
+#: Invite links carry the password encrypted in ``?psw=``; that form is a deep
+#: link for the desktop app, while the web lobby is the same path without it.
+DEEP_LINK_PARAMS = ("psw",)
+
+
+def strip_deep_link_params(url: str) -> tuple[str, list[str]]:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    dropped = [key for key, _value in query if key in DEEP_LINK_PARAMS]
+    if not dropped:
+        return url, []
+    kept = [(key, value) for key, value in query if key not in DEEP_LINK_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(kept))), dropped
+
 CAPTURE_JS = r"""
 (() => {
   if (window.__transcribeAgent) return;
@@ -215,12 +249,34 @@ NAME_SELECTORS = [
 ]
 
 JOIN_SELECTORS = [
-    'button:has-text("Присоединиться")',
     'button:has-text("Подключиться")',
+    'button:has-text("Присоединиться")',
+    'button:has-text("Войти в комнату")',
     'button:has-text("Войти")',
     'button:has-text("Join")',
     'button:has-text("Enter")',
     'button:has-text("Продолжить")',
+]
+
+PASSWORD_SELECTORS = [
+    'input[name="password"]',
+    'input[type="password"]',
+    'input[placeholder*="ароль" i]',
+    'input[placeholder*="password" i]',
+]
+
+#: SaluteJazz: aria-label toggles between "Включить звук" and "Выключить звук".
+MIC_SELECTORS = ['[data-testid="microphone"]', '[aria-label*="Включить звук"]']
+
+#: Shown when the client decides the link belongs to its desktop app; the second
+#: button is the product's own "continue anyway" escape hatch.
+BLOCKER_SELECTORS = [
+    'button:has-text("Продолжить в браузере")',
+    'button:has-text("Все равно продолжить")',
+    'button:has-text("Всё равно продолжить")',
+    'button:has-text("Продолжить")',
+    'button:has-text("Пропустить")',
+    'button:has-text("Skip")',
 ]
 
 
@@ -249,10 +305,22 @@ class BrowserAgent:
         *,
         display_name: str = "Ассистент (транскрибация)",
         headless: bool = True,
-        channel: str | None = "msedge",
+        channel: str | None = "chrome",
         join_timeout_ms: int = 45_000,
+        password: str | None = None,
+        strip_invite: bool = False,
     ) -> None:
+        # An invite link with ?psw= carries the password. Keep it by default: the
+        # web lobby accepts it once the browser check is bypassed, and the plain
+        # password never has to be typed. Stripping is a fallback for clients
+        # that insist on the app deep link.
         self.url = url
+        self.dropped_params: list[str] = []
+        if strip_invite:
+            self.url, self.dropped_params = strip_deep_link_params(url)
+            if self.dropped_params:
+                log.info("agent: dropped %s from the meeting URL", self.dropped_params)
+        self.password = password
         self.display_name = display_name
         self.headless = headless
         self.channel = channel
@@ -265,6 +333,7 @@ class BrowserAgent:
         self._queue: asyncio.Queue[AudioChunk] = asyncio.Queue(maxsize=2048)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tracks: dict[str, TrackInfo] = {}
+        self._remote_names: list[str] = []
         self.track_events: asyncio.Queue[TrackInfo] = asyncio.Queue()
         self.notes: list[str] = []
         self.crashed = False
@@ -293,17 +362,17 @@ class BrowserAgent:
         self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
 
-        launch_args = [
-            "--use-fake-ui-for-media-stream",
-            "--autoplay-policy=no-user-gesture-required",
-            "--disable-blink-features=AutomationControlled",
-        ]
+        launch_args = list(LAUNCH_ARGS)
         channels = [self.channel] if self.channel else [None]
         last_error: Exception | None = None
         for channel in channels + [None]:
             try:
                 self._browser = await self._playwright.chromium.launch(
-                    headless=self.headless, channel=channel, args=launch_args
+                    headless=self.headless,
+                    channel=channel,
+                    args=launch_args,
+                    # Playwright adds this by default and VCS clients detect it.
+                    ignore_default_args=["--enable-automation"],
                 )
                 log.info("agent: browser launched (%s)", channel or "chromium")
                 break
@@ -317,6 +386,9 @@ class BrowserAgent:
             viewport={"width": 1440, "height": 900},
             locale="ru-RU",
         )
+        # Must be awaited: an un-awaited coroutine silently skips the scripts,
+        # which is exactly how the browser check slipped through once.
+        await self._context.add_init_script(PRELUDE_JS)
         self.page = await self._context.new_page()
         self.page.on("pageerror", lambda error: self.notes.append(f"pageerror: {error}"))
         self.page.on("crash", lambda *_: self._mark_crashed("page crashed"))
@@ -343,25 +415,148 @@ class BrowserAgent:
         return next(iter(self._tracks.values()), None)
 
     async def _join(self) -> None:
-        await self.page.wait_for_timeout(1500)
-        for selector in NAME_SELECTORS:
-            locator = self.page.locator(selector).first
-            try:
-                if await locator.count() and await locator.is_visible():
-                    await locator.fill(self.display_name)
-                    self.notes.append(f"filled {selector}")
-                    break
-            except Exception:  # noqa: BLE001 - heuristics only
-                continue
-        for selector in JOIN_SELECTORS:
+        """Guest lobby: display name, meeting password, connect, then unmute.
+
+        Verified against the SaluteJazz web client. Two things make this loop
+        instead of a straight sequence of clicks:
+
+        * the client sometimes shows "откройте в приложении" (it fires a
+          ``jazz://join`` deep link) even with the bypass flag set, and offers a
+          "continue in the browser" button — it has to be pressed;
+        * the lobby paints a few seconds after load.
+
+        Nothing is published to the SFU while everybody is muted, so the agent
+        unmutes itself once it is inside — that is what makes remote tracks
+        appear at all.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 45
+        room_ready = False
+
+        while loop.time() < deadline:
+            if await self.page.locator('[data-testid="microphone"]').count():
+                room_ready = True
+                break
+
+            await self._dismiss_blockers()
+
+            filled = False
+            for selector in NAME_SELECTORS:
+                locator = self.page.locator(selector).first
+                try:
+                    if await locator.count() and await locator.is_visible():
+                        await locator.fill(self.display_name)
+                        self.notes.append(f"filled name via {selector}")
+                        filled = True
+                        break
+                except Exception:  # noqa: BLE001 - heuristics only
+                    continue
+
+            if self.password:
+                for selector in PASSWORD_SELECTORS:
+                    locator = self.page.locator(selector).first
+                    try:
+                        if await locator.count() and await locator.is_visible():
+                            await locator.fill(self.password)
+                            self.notes.append(f"filled password via {selector}")
+                            break
+                    except Exception:  # noqa: BLE001
+                        continue
+
+            if filled:
+                for selector in JOIN_SELECTORS:
+                    locator = self.page.locator(selector).first
+                    try:
+                        if await locator.count() and await locator.is_visible():
+                            await locator.click()
+                            self.notes.append(f"clicked {selector}")
+                            break
+                    except Exception:  # noqa: BLE001
+                        continue
+
+            await self.page.wait_for_timeout(1200)
+
+        if not room_ready:
+            self.notes.append("room UI did not appear")
+            return
+
+        self.notes.append("entered the room")
+        await self.page.wait_for_timeout(1200)
+        # Names first, then unmute: the first audio packet arrives the instant the
+        # microphone is published, and a track without a name is worse than a
+        # second of extra delay.
+        await self._read_participant_names()
+        await self._unmute()
+        await self.page.wait_for_timeout(800)
+        if not self._remote_names:
+            await self._read_participant_names()
+
+    async def _dismiss_blockers(self) -> None:
+        """Press "continue in browser" if the client insists on its desktop app."""
+        for selector in BLOCKER_SELECTORS:
             locator = self.page.locator(selector).first
             try:
                 if await locator.count() and await locator.is_visible():
                     await locator.click()
-                    self.notes.append(f"clicked {selector}")
-                    break
+                    self.notes.append(f"dismissed blocker via {selector}")
+                    await self.page.wait_for_timeout(1200)
+                    return
             except Exception:  # noqa: BLE001
                 continue
+
+    async def _unmute(self) -> None:
+        """Publish our own audio: the SFU stays idle while everyone is muted."""
+        for selector in MIC_SELECTORS:
+            locator = self.page.locator(selector).first
+            try:
+                aria = await locator.get_attribute("aria-label") or ""
+                if await locator.count() and await locator.is_visible():
+                    if "Включить" in aria:
+                        await locator.click()
+                        self.notes.append("unmuted")
+                    return
+            except Exception:  # noqa: BLE001
+                continue
+
+    async def _read_participant_names(self) -> None:
+        """Participant names come from the tile's aria-label, minus our own tile."""
+        try:
+            names = await self.page.evaluate(
+                """
+                () => Array.from(document.querySelectorAll('[data-testid^="participantItem-"]'))
+                  .map((node) => {
+                    const aria = node.getAttribute('aria-label') || '';
+                    const self = aria.includes('Это вы');
+                    return { name: aria.split('.')[0].trim(), self };
+                  })
+                  .filter((item) => item.name && !item.self)
+                  .map((item) => item.name)
+                """
+            )
+            if isinstance(names, list) and names:
+                # Never label a remote track with our own display name.
+                self._remote_names = [
+                    str(name) for name in names if name and name != self.display_name
+                ]
+                self.notes.append(f"participants: {', '.join(self._remote_names)}")
+                self._apply_names_to_tracks()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _apply_names_to_tracks(self) -> None:
+        """Tracks open before the participant list renders; name them now."""
+        used: set[str] = set()
+        for info in self._tracks.values():
+            if info.name and not info.name.startswith("Участник"):
+                used.add(info.name)
+        for info in self._tracks.values():
+            if info.name and not info.name.startswith("Участник"):
+                continue
+            for candidate in self._remote_names:
+                if candidate not in used:
+                    info.name = candidate
+                    used.add(candidate)
+                    break
 
     async def close(self) -> None:
         try:
@@ -409,7 +604,10 @@ class BrowserAgent:
             return
         name = (data.get("name") or "").strip()
         if not name or len(name) > 60:
-            name = f"Участник {len(self._tracks) + 1}"
+            # Fall back to the participant list from the room UI, in join order.
+            used = {info.name for info in self._tracks.values()}
+            remaining = [item for item in self._remote_names if item not in used]
+            name = remaining[0] if remaining else f"Участник {len(self._tracks) + 1}"
         info = TrackInfo(
             track_id=track_id,
             name=name,

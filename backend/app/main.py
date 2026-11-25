@@ -61,6 +61,7 @@ async def lifespan(_: FastAPI):
             headless=bool(session.options.get("headless", True)),
             model=str(session.options.get("model", "large-v3-turbo")),
             speed=float(session.options.get("speed", 1.0)),
+            password=session.options.get("password"),
         )
         await session.start(speed=float(session.options.get("speed", 1.0)))
         log.info("re-armed scheduled session %s", session.id)
@@ -93,6 +94,9 @@ class StartRequest(BaseModel):
     speed: float = Field(1.0, ge=0.05, le=50.0, description="Ускорение mock-пайплайна")
     headless: bool = Field(True, description="Для jazz: показывать ли браузер")
     model: str = Field("large-v3-turbo", description="Для jazz: модель faster-whisper")
+    password: str | None = Field(
+        None, description="Пароль встречи, если ссылка без встроенного ?psw="
+    )
 
     @field_validator("meeting_url")
     @classmethod
@@ -146,11 +150,12 @@ def _build_pipeline(
     headless: bool,
     model: str,
     speed: float,
+    password: str | None = None,
 ):
     if pipeline == "jazz":
         from .jazz import JazzPipeline
 
-        return JazzPipeline(meeting_url, headless=headless, model=model)
+        return JazzPipeline(meeting_url, headless=headless, model=model, password=password)
     return MockPipeline(meeting_url, speed=speed)
 
 
@@ -173,6 +178,7 @@ async def create_session(payload: StartRequest) -> dict:
         headless=payload.headless,
         model=payload.model,
         speed=payload.speed,
+        password=payload.password,
     )
     session = manager.create(
         payload.meeting_url,
@@ -185,6 +191,7 @@ async def create_session(payload: StartRequest) -> dict:
             "headless": payload.headless,
             "model": payload.model,
             "speed": payload.speed,
+            "password": payload.password,
         },
     )
     # Give the agent somewhere to save a screenshot when the join goes wrong.

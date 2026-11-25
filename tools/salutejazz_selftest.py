@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 
@@ -59,21 +60,64 @@ HOOK = r"""
     })),
     url: location.href,
     body: (document.body.innerText || '').slice(0, 300),
+    // Where could the SFU client hide? An iframe would explain empty tracks.
+    probeInstalled: !!window.__probe,
+    pcType: typeof window.RTCPeerConnection,
+    iframes: Array.from(document.querySelectorAll('iframe')).map((f) => (f.src || '').slice(0, 120)),
+    media: Array.from(document.querySelectorAll('video, audio')).map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      paused: el.paused,
+      srcObject: el.srcObject ? el.srcObject.getTracks().map((t) => t.kind) : null,
+      src: (el.src || '').slice(0, 60),
+    })),
+    // Mic/camera toggles carry their meaning in aria-label or title.
+    buttons: Array.from(document.querySelectorAll('button, [role="button"]'))
+      .filter((b) => b.getBoundingClientRect().width > 0)
+      .map((b) => ({
+        text: (b.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 30),
+        aria: b.getAttribute('aria-label') || '',
+        title: b.getAttribute('title') || '',
+        testid: b.getAttribute('data-testid') || '',
+      })),
   });
+  window.__devices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.map((d) => d.kind);
+    } catch (e) { return ['error: ' + e]; }
+  };
 })();
 """
 
 
 #: The product's own labels contain a soft hyphen ("видео\u00adвстречу"), so text
 #: selectors miss them; match on normalised text inside the page instead.
+#: ``offsetParent`` is null for fixed-position elements, so visibility is checked
+#: by bounding box, and the *shortest* match wins — the button, not its card.
 CLICK_BY_TEXT = """
 (needle) => {
   const norm = (s) => (s || '').replace(/\\u00ad/g, '').replace(/\\s+/g, ' ').trim();
-  const nodes = Array.from(document.querySelectorAll('button, a, [role="button"], [data-testid]'));
-  const hit = nodes.find((node) => node.offsetParent && norm(node.innerText).includes(needle));
-  if (!hit) return null;
-  hit.click();
-  return norm(hit.innerText).slice(0, 60);
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return false;
+    const style = window.getComputedStyle(node);
+    return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+  };
+  const clickable = (node) => {
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'button' || tag === 'a' || node.getAttribute('role') === 'button') return true;
+    return window.getComputedStyle(node).cursor === 'pointer';
+  };
+  const depth = (node) => { let d = 0, p = node; while (p && p.parentElement) { d++; p = p.parentElement; } return d; };
+  const candidates = Array.from(document.querySelectorAll('*'))
+    .filter((node) => visible(node) && clickable(node) && norm(node.innerText).includes(needle))
+    // The deepest match is the label itself; the click bubbles to the handler.
+    .sort((a, b) => depth(b) - depth(a));
+  if (!candidates.length) return null;
+  const target = candidates[0];
+  target.scrollIntoView({block: 'center'});
+  target.click();
+  return norm(target.innerText).slice(0, 60);
 }
 """
 
@@ -94,6 +138,39 @@ def dismiss(page, labels: list[str]) -> list[str]:
             done.append(clicked)
             page.wait_for_timeout(600)
     return done
+
+
+OVERLAYS = ["Пропустить", "Понятно", "Позже", "Разрешить"]
+
+
+def turn_on_mic(page) -> bool:
+    """Unmute: nothing is published while the mic is off, so the SFU stays idle."""
+    for selector in ('[data-testid="microphone"]', '[aria-label="Включить звук"]'):
+        try:
+            button = page.locator(selector).first
+            if button.count() and button.is_visible():
+                button.click(timeout=3000)
+                page.wait_for_timeout(800)
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
+def wait_and_click(page, needle: str, *, timeout: int = 18) -> str | None:
+    """Click a label, clearing banners first and retrying until the SPA is ready.
+
+    The client shows an update banner over the page; a click that lands while it
+    is open hits the backdrop and silently does nothing.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        dismiss(page, OVERLAYS)
+        result = click_by_text(page, needle)
+        if result:
+            return result
+        page.wait_for_timeout(800)
+    return None
     done = []
     for label in labels:
         locator = page.locator(f'button:has-text("{label}")').first
@@ -111,6 +188,11 @@ def main() -> int:
     parser.add_argument("--wav", default=str(ROOT / ".artifacts" / "speech" / "ru-1.wav"))
     parser.add_argument("--seconds", type=int, default=25)
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument(
+        "--use-psw",
+        action="store_true",
+        help="let the agent open the host URL as-is, including ?psw=…",
+    )
     args = parser.parse_args()
     OUT.mkdir(exist_ok=True)
 
@@ -143,27 +225,52 @@ def main() -> int:
         host.wait_for_timeout(3000)
         report["steps"].append(f"dismissed: {dismiss(host, ['Понятно', 'Пропустить', 'Позже'])}")
 
-        clicked = click_by_text(host, "Создать видео")
+        clicked = wait_and_click(host, "Создать видео")
         report["steps"].append(f"clicked create: {clicked}")
         host.wait_for_timeout(4000)
         report["create_dialog_body"] = host.evaluate("(document.body.innerText || '').slice(0, 400)")
 
-        # A modal may ask to confirm; try the obvious buttons once.
-        for label in ("Создать", "Начать", "Продолжить", "Разрешить", "Понятно"):
-            result = click_by_text(host, label)
-            if result:
-                report["steps"].append(f"confirmed: {result}")
-                host.wait_for_timeout(1500)
+        # /calls/create asks for a display name and a meeting title.
+        for selector, value in (
+            ('input[name="userName"]', "Тестовый хост"),
+            ('input[name="conferenceName"]', "Автотест транскрибации"),
+            ('input[name="name"]', "Тестовый хост"),
+        ):
+            try:
+                field = host.locator(selector).first
+                if field.count() and field.is_visible():
+                    field.fill(value, timeout=3000)
+                    report["steps"].append(f"filled {selector}")
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        for selector in ('input[name="conferenceName"]',):
+            try:
+                field = host.locator(selector).first
+                if field.count() and field.is_visible():
+                    field.fill("Автотест транскрибации", timeout=3000)
+                    report["steps"].append(f"filled {selector}")
+            except Exception:  # noqa: BLE001
+                pass
 
-        host.wait_for_timeout(5000)
-        report["steps"].append(f"dismissed after create: {dismiss(host, ['Понятно', 'Пропустить', 'Позже', 'Разрешить'])}")
+        joined = wait_and_click(host, "Создать и присоединиться")
+        report["steps"].append(f"clicked join-create: {joined}")
+        host.wait_for_timeout(3000)
+        report["steps"].append(f"dismissed after create: {dismiss(host, ['Разрешить', 'Позже', 'Понятно', 'Пропустить'])}")
+
+        for _ in range(20):
+            if re.search(r"/calls/[a-z0-9]{6}(?:$|\?)", host.url):
+                break
+            host.wait_for_timeout(1500)
         host.wait_for_timeout(2000)
+        report["host_mic"] = turn_on_mic(host)
         report["host_url"] = host.url
         report["host_body"] = host.evaluate("(document.body.innerText || '').slice(0, 500)")
 
         room = ""
-        if "/calls/" in host.url:
-            room = host.url.rstrip("/").rsplit("/", 1)[-1].split("?")[0]
+        match = re.search(r"/calls/([a-z0-9]{6})(?:$|\?)", host.url)
+        if match:
+            room = match.group(1)
         report["host_room"] = room or None
         print("host url:", host.url, "| room:", room)
 
@@ -186,8 +293,12 @@ def main() -> int:
             agent_ctx.add_init_script(PRELUDE)
             agent_ctx.add_init_script(HOOK)
             agent = agent_ctx.new_page()
-            agent.goto(f"https://salutejazz.ru/calls/{room}", wait_until="domcontentloaded", timeout=90_000)
+            # The host URL carries ?psw=…; while the room is live the web client
+            # may accept it, which spares us from extracting the plain password.
+            agent_url = host.url if args.use_psw else f"https://salutejazz.ru/calls/{room}"
+            agent.goto(agent_url, wait_until="domcontentloaded", timeout=90_000)
             agent.wait_for_timeout(3500)
+            report["agent_open_body"] = agent.evaluate("(document.body.innerText || '').slice(0, 400)")
             try:
                 agent.fill('input[name="name"]', "Ассистент (транскрибация)", timeout=5000)
                 report["steps"].append("filled name")
@@ -204,14 +315,19 @@ def main() -> int:
                     continue
 
             deadline = time.time() + args.seconds
+            mic_clicked = False
             while time.time() < deadline:
                 agent.wait_for_timeout(3000)
+                if not mic_clicked:
+                    mic_clicked = turn_on_mic(agent)
+                    report["agent_mic"] = mic_clicked
                 snapshot = agent.evaluate("window.__snapshot ? window.__snapshot() : {}")
                 print(
                     f"  agent tracks={len(snapshot.get('tracks', []))} "
                     f"videos={len(snapshot.get('videos', []))} url={snapshot.get('url', '')[:60]}"
                 )
             report["agent_snapshot"] = snapshot
+            report["agent_final_body"] = agent.evaluate("(document.body.innerText || '').slice(0, 400)")
             agent.screenshot(path=str(OUT / "selftest-agent.png"))
             agent_browser.close()
 
