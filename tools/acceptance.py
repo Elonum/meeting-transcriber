@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS: list[dict] = []
-MEETING = "https://jazz.sber.ru/meeting/acceptance"
+MEETING = "https://salutejazz.ru/acceptance"
 
 
 def record(name: str, ok: bool, detail: str = "") -> None:

@@ -59,7 +59,7 @@ cd backend
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Откройте <http://127.0.0.1:8000>, вставьте любую ссылку вида `https://jazz.sber.ru/...`,
+Откройте <http://127.0.0.1:8000>, вставьте любую ссылку вида `https://salutejazz.ru/<ссылка-из-приложения>`,
 нажмите «Подключить агента». Через пару секунд появятся участники, лица и текст.
 Документация API — <http://127.0.0.1:8000/docs>.
 
@@ -85,7 +85,7 @@ npm run dev          # http://127.0.0.1:5173, /api и /events уходят на 
 
 ```powershell
 curl -X POST http://127.0.0.1:8000/api/sessions -H "Content-Type: application/json" -d '{
-  "meeting_url": "https://jazz.sber.ru/...",
+  "meeting_url": "https://salutejazz.ru/<ссылка-из-приложения>",
   "pipeline": "jazz",
   "headless": true
 }'
@@ -207,9 +207,20 @@ http://127.0.0.1:8000/fake-meeting/?peers=2&audio1=/fixtures/ru-1.wav&name1=Ан
 
 Путь выбирается **после 45-минутного спайка**, а не до него:
 
+> **Продукт переименован.** «Джазз от Сбера» теперь **SaluteJazz** на `salutejazz.ru`;
+> старый `jazz.sber.ru` отдаёт 308-редирект туда же. Документация —
+> <https://developers.sber.ru/portal/products/jazz-by-sber>.
+>
+> Наблюдение при разведке: страница `/calls` в автоматизированном Chromium/Edge/Chrome отдаёт
+> «Ваш браузер не поддерживается» при любых настройках — headless и с окном, без флагов
+> автоматизации, без `--enable-automation`, с фейковыми медиаустройствами и без них. Страница
+> самой комнаты по реальной ссылке ещё не проверена: возможно, отказ относится только к
+> логину и списку встреч. Если и комната откажет, запасной путь — постоянный профиль браузера
+> (`launch_persistent_context`), в котором оператор один раз вошёл руками.
+
 ```powershell
 # Первый прогон — с браузером на экране, чтобы увидеть, требует ли встреча логина
-.\.venv\Scripts\python.exe spike\probe_jazz.py --url "https://jazz.sber.ru/..." --headed --seconds 45
+.\.venv\Scripts\python.exe spike\probe_jazz.py --url "https://salutejazz.ru/<ссылка-из-приложения>" --headed --seconds 45
 ```
 
 Скрипт подменяет `RTCPeerConnection` до загрузки страницы, поэтому видит все удалённые дорожки,

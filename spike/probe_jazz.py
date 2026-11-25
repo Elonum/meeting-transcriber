@@ -14,7 +14,7 @@ Nothing is uploaded anywhere.
 Usage
 -----
     # first look: watch what happens, then join by hand if needed
-    .venv\\Scripts\\python.exe spike\\probe_jazz.py --url "https://jazz.sber.ru/..." --headed
+    .venv\\Scripts\\python.exe spike\\probe_jazz.py --url "https://salutejazz.ru/<ссылка-из-приложения>" --headed
 
     # unattended run
     .venv\\Scripts\\python.exe spike\\probe_jazz.py --url "..." --seconds 45
