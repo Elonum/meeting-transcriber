@@ -4,12 +4,16 @@ import { initials } from '../format'
 
 interface SceneProps {
   participants: Participant[]
+  live: boolean
 }
 
-/** The meeting "stage": one tile per participant, the speaker is highlighted. */
-export function Scene({ participants }: SceneProps) {
-  const humans = participants.filter((participant) => participant.role !== 'bot')
-  const speakers = participants.filter((participant) => participant.speaking).length
+/** The meeting "stage": one tile per person who is still in the room. */
+export function Scene({ participants, live }: SceneProps) {
+  // People who left keep their lines in the transcript, but a tile that says
+  // "слушает" about somebody who is gone is simply wrong.
+  const present = participants.filter((participant) => participant.present !== false)
+  const humans = present.filter((participant) => participant.role !== 'bot')
+  const speakers = present.filter((participant) => participant.speaking).length
 
   return (
     <section className="scene" aria-label="Участники встречи">
@@ -17,18 +21,21 @@ export function Scene({ participants }: SceneProps) {
         <h2>Сцена</h2>
         <span className="scene__hint">
           {humans.length === 0
-            ? 'агент подключается к встрече'
+            ? live
+              ? 'в комнате никого нет'
+              : 'встреча завершена'
             : `${humans.length} ${plural(humans.length)}${speakers ? ` · говорит ${speakers}` : ''}`}
         </span>
       </div>
 
-      {participants.length === 0 ? (
+      {present.length === 0 ? (
         <div className="scene__empty">
-          <span className="dot dot--live" /> Ждём, когда агент войдёт в комнату…
+          <span className="dot dot--live" />
+          {live ? 'Никого нет в комнате — ждём участников…' : 'Ждём, когда агент войдёт в комнату…'}
         </div>
       ) : (
         <div className="tiles">
-          {participants.map((participant) => (
+          {present.map((participant) => (
             <ParticipantTile key={participant.id} participant={participant} />
           ))}
         </div>
@@ -91,7 +98,9 @@ function ParticipantTile({ participant }: { participant: Participant }) {
 
       <div className="tile__meta">
         <strong className="tile__name">{participant.display_name}</strong>
-        <span className="tile__sub">{isBot ? 'ассистент' : participant.speaking ? 'говорит' : 'слушает'}</span>
+        <span className="tile__sub">
+          {isBot ? 'ассистент' : participant.speaking ? 'говорит' : 'слушает'}
+        </span>
       </div>
     </article>
   )

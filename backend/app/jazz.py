@@ -20,10 +20,26 @@ from .session import Emitter
 
 log = logging.getLogger(__name__)
 
+#: How long to keep asking for a camera frame, in seconds between attempts.
+#: Sums to 40 s, which covers "включу камеру через полминуты".
+FACE_DELAYS = (4.0, 6.0, 8.0, 10.0, 12.0)
+
 
 def recording_enabled() -> bool:
     """Recording is on by default; ``TRANSCRIBE_RECORD=0`` turns it off."""
     return os.environ.get("TRANSCRIBE_RECORD", "1").strip().lower() not in {"0", "false", "no"}
+
+
+def empty_room_timeout() -> int:
+    """Seconds to wait after the last person leaves before finishing (0 = never).
+
+    A meeting where everyone has gone is a meeting that produced its transcript
+    already; leaving a browser parked there costs memory and confuses the UI.
+    """
+    try:
+        return max(0, int(os.environ.get("TRANSCRIBE_EMPTY_ROOM_TIMEOUT", "60")))
+    except ValueError:
+        return 60
 
 
 class JazzPipeline:
@@ -43,6 +59,7 @@ class JazzPipeline:
         partial_interval_ms: int = 1200,
         agent: BrowserAgent | None = None,
         password: str | None = None,
+        empty_room_timeout_s: int | None = None,
     ) -> None:
         self.meeting_url = meeting_url
         self.headless = headless
@@ -52,6 +69,9 @@ class JazzPipeline:
         self.language = language
         self.partial_interval_ms = partial_interval_ms
         self.password = password
+        self.empty_room_timeout_s = (
+            empty_room_timeout_s if empty_room_timeout_s is not None else empty_room_timeout()
+        )
 
         # Injectable so the failure paths can be tested without a browser.
         self.agent = agent or BrowserAgent(
@@ -60,12 +80,17 @@ class JazzPipeline:
         self.runner = get_runner(model, device=device, language=language)
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
+        self._participant_state: dict[str, dict[str, Any]] = {}  # track_id -> session dict
         self._asr: dict[str, ParticipantASR] = {}
         self._face_tasks: list[asyncio.Task[None]] = []
         self._emit: Emitter | None = None
         self._index = 0
         self.recorder: SessionRecorder | None = None
         self._stats = {"chunks": 0, "bytes": 0, "finals": 0, "partials": 0, "faces": 0}
+        #: Last final per track, to drop a phrase the decoder emits twice.
+        self._last_final: dict[str, tuple[str, int]] = {}
+        self._saw_human = False
+        self._empty_since: float | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -116,6 +141,7 @@ class JazzPipeline:
 
         self._clock_start = started
         reader = asyncio.create_task(self._read_audio())
+        watcher = asyncio.create_task(self._participant_loop())
         lost_browser = False
         try:
             while True:
@@ -136,13 +162,16 @@ class JazzPipeline:
                         )
                     )
                     break
+                if await self._room_is_empty(at()):
+                    break
                 if reader.done():
                     break
         finally:
             reader.cancel()
+            watcher.cancel()
             for task in self._face_tasks:
                 task.cancel()
-            await asyncio.gather(reader, *self._face_tasks, return_exceptions=True)
+            await asyncio.gather(reader, watcher, *self._face_tasks, return_exceptions=True)
             await self._flush(at)
             await self.agent.close()
             tracks, recorded_bytes = self._stop_recording()
@@ -173,6 +202,78 @@ class JazzPipeline:
         for track_id, asr in self._asr.items():
             events = await asyncio.to_thread(asr.flush)
             await self._publish(track_id, events, at)
+
+    async def _room_is_empty(self, at_ms: int) -> bool:
+        """Finish the meeting once everybody has left and stayed away.
+
+        The track stays alive at the SFU after a person hangs up, so the room's
+        participant list is what tells us they are gone. A grace period keeps a
+        reconnect from ending the session.
+        """
+        if not self.empty_room_timeout_s or not self._participant_state:
+            return False
+        if getattr(self.agent, "human_present", True):
+            self._saw_human = True
+            self._empty_since = None
+            return False
+        if not self._saw_human:
+            return False
+        loop = asyncio.get_running_loop()
+        if self._empty_since is None:
+            self._empty_since = loop.time()
+            return False
+        if loop.time() - self._empty_since < self.empty_room_timeout_s:
+            return False
+
+        assert self._emit is not None
+        await self._emit(
+            p.ev_notice(
+                at_ms,
+                "В комнате не осталось участников — запись и распознавание завершены.",
+            )
+        )
+        return True
+
+    async def _participant_loop(self) -> None:
+        """Apply name changes and departures reported by the browser agent."""
+        updates = getattr(self.agent, "updates", None)
+        if updates is None:
+            return
+        while True:
+            update = await updates.get()
+            try:
+                await self._apply_participant_update(update)
+            except Exception:  # noqa: BLE001 - one bad update must not stop the meeting
+                log.exception("participant update failed")
+
+    async def _apply_participant_update(self, update: Any) -> None:
+        """Send only what changed; the session merges it into the participant.
+
+        Sending the whole snapshot here reset fields the pipeline does not track,
+        such as the face status and the thumbnail, so a rename erased a detected
+        face. The event is a patch by design.
+        """
+        assert self._emit is not None
+        state = self._participant_state.get(update.track_id)
+        if state is None:
+            return
+
+        patch: dict[str, Any] = {"id": state["id"]}
+        name = getattr(update, "name", None)
+        if name and name != state.get("display_name"):
+            log.info("participant %s renamed to %s", state["id"], name)
+            state["display_name"] = name
+            patch["display_name"] = name
+        present = getattr(update, "present", None)
+        if present is not None and present != state.get("present", True):
+            state["present"] = present
+            if not present:
+                state["speaking"] = False
+            patch["present"] = present
+            if not present:
+                patch["speaking"] = False
+        if len(patch) > 1:
+            await self._emit(p.ev_participant(p.now_ms() - self._clock_start, patch))
 
     def set_artifacts_dir(self, path: Any) -> None:
         """Where to drop diagnostic screenshots and recorded audio (set by the API)."""
@@ -254,17 +355,22 @@ class JazzPipeline:
             participant_id, resolved or f"Участник {self._index}", color_index=self._index
         )
         participant["joined_at_ms"] = p.now_ms() - self._clock_start
+        self._participant_state[track_id] = participant
         await self._emit(p.ev_participant(p.now_ms() - self._clock_start, participant))
 
         info = self.agent._tracks.get(track_id)
         if info is not None and info.video_track_id:
             self._face_tasks.append(
-                asyncio.create_task(self._face_loop(participant_id, info.video_track_id))
+                asyncio.create_task(self._face_loop(participant_id, track_id))
             )
         elif self.detector.name == "none":
             await self._emit(
                 p.ev_face(p.now_ms() - self._clock_start, participant_id, "none"),
             )
+        else:
+            # No camera yet. People often turn one on mid-meeting, so keep asking
+            # for a while: the video track joins the same stream when it starts.
+            self._face_tasks.append(asyncio.create_task(self._face_loop(participant_id, track_id)))
 
         if self.runner.resolved:
             await self._emit(
@@ -274,17 +380,25 @@ class JazzPipeline:
                 )
             )
 
-    async def _face_loop(self, participant_id: str, video_track_id: str) -> None:
+    async def _face_loop(
+        self,
+        participant_id: str,
+        track_id: str,
+        delays: tuple[float, ...] = FACE_DELAYS,
+    ) -> None:
         """Grab a few frames per participant and report what was found.
 
         The frame itself is the fallback: even with no detector installed the UI
         shows the participant's real video instead of an empty avatar, which is
         honest — a frame arrived, no face was identified.
+
+        Retrying matters: a camera switched on a minute into the call must still
+        put a face in the tile, and the first attempts simply see nothing.
         """
         assert self._emit is not None
-        for attempt in range(3):
-            await asyncio.sleep(4 if attempt == 0 else 6)
-            frame = await self.agent.grab_face(video_track_id)
+        for delay in delays:
+            await asyncio.sleep(delay)
+            frame = await self.agent.grab_face(track_id)
             if not frame:
                 continue
             detection = None
@@ -302,6 +416,9 @@ class JazzPipeline:
             else:
                 await self._emit(p.ev_face(at, participant_id, "frame", None, frame))
             return
+
+        # Nothing after every attempt: the camera stayed off.
+        await self._emit(p.ev_face(p.now_ms() - self._clock_start, participant_id, "none"))
 
     async def _publish(self, track_id: str, events: list[ASREvent], at: Any) -> None:
         assert self._emit is not None
@@ -326,6 +443,14 @@ class JazzPipeline:
                     )
                 )
             elif event.kind == "final" and event.text:
+                normalized = " ".join(event.text.lower().split())
+                previous = self._last_final.get(track_id)
+                if previous and previous[0] == normalized and abs(event.start_ms - previous[1]) <= 2000:
+                    # The decoder re-emitted the same phrase for the same words;
+                    # keeping both would double every "алло" in the protocol.
+                    log.debug("dropping duplicate final for %s: %s", track_id[:8], event.text)
+                    continue
+                self._last_final[track_id] = (normalized, event.start_ms)
                 self._stats["finals"] += 1
                 await self._emit(
                     p.ev_segment(

@@ -64,13 +64,24 @@ def to_txt(segments: Iterable[dict[str, Any]], names: dict[str, str]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def local_start(session: dict[str, Any]) -> datetime:
+    """Start time in the machine's timezone.
+
+    The transcript is read by the people who were in the meeting, so a UTC stamp
+    is a small but constant annoyance; ``astimezone()`` keeps the offset visible
+    for anyone who opens the file elsewhere.
+    """
+    moment = datetime.fromtimestamp(session["started_at_ms"] / 1000, tz=timezone.utc)
+    return moment.astimezone()
+
+
 def to_md(
     session: dict[str, Any],
     segments: Iterable[dict[str, Any]],
     names: dict[str, str],
     participants: Iterable[dict[str, Any]],
 ) -> str:
-    started = datetime.fromtimestamp(session["started_at_ms"] / 1000, tz=timezone.utc)
+    started = local_start(session)
     people = ", ".join(
         part["display_name"] + (" (бот)" if part["role"] == "bot" else "")
         for part in participants
@@ -79,7 +90,7 @@ def to_md(
         f"# {session['title']}",
         "",
         f"- **Ссылка:** {session['meeting_url']}",
-        f"- **Начало:** {started:%Y-%m-%d %H:%M} UTC",
+        f"- **Начало:** {started:%Y-%m-%d %H:%M %z}",
         f"- **Длительность:** {_duration(session, segments)}",
         f"- **Пайплайн:** `{session['pipeline']}`",
         f"- **Участники:** {people or '—'}",
@@ -114,10 +125,11 @@ def to_json(
             {
                 "id": part["id"],
                 "display_name": part["display_name"],
-                "role": part["role"],
-                "face_status": part["face_status"],
-                "face_confidence": part["face_confidence"],
-                "has_video": part["has_video"],
+                "role": part.get("role", "human"),
+                "face_status": part.get("face_status", "unknown"),
+                "face_confidence": part.get("face_confidence"),
+                "has_video": part.get("has_video", False),
+                "present": part.get("present", True),
             }
             for part in participants
         ],

@@ -11,10 +11,10 @@ would only make the download slower to start.
 from __future__ import annotations
 
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 from . import export as exporters
+from .export import local_start
 from .recording import scan_audio_dir
 from .session import Session
 
@@ -23,12 +23,12 @@ TEXT_FORMATS = ("srt", "vtt", "md", "txt", "json")
 
 
 def _manifest(session: Session) -> str:
-    started = datetime.fromtimestamp(session.started_at_ms / 1000, tz=timezone.utc)
+    started = local_start(session.as_dict())
     audio = scan_audio_dir(session.dir / "audio")
     lines = [
         f"Встреча: {session.title}",
         f"Ссылка: {session.meeting_url}",
-        f"Начало (UTC): {started:%Y-%m-%d %H:%M}",
+        f"Начало: {started:%Y-%m-%d %H:%M %z}",
         f"Пайплайн: {session.pipeline.name}",
         f"Реплик: {len(session.final_segments())}",
         "",

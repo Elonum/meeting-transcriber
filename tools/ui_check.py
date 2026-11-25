@@ -232,6 +232,23 @@ def main() -> int:
             cancelled = False
         check("cancelling finishes the session", cancelled, page.locator(".pill").inner_text().strip())
 
+        # -- live lines disappear once the phrase is finalised ----------------
+        _, finished = api(
+            "/api/sessions",
+            {"meeting_url": MEETING, "title": "Финальные реплики", "pipeline": "mock", "speed": 40},
+        )
+        page.goto(f"{BASE}/?session={finished['id']}", wait_until="networkidle")
+        try:
+            page.wait_for_function(
+                "() => document.querySelector('.pill')?.textContent?.includes('Завершено')", timeout=60000
+            )
+            page.wait_for_timeout(800)
+            partials = page.locator(".line--partial").count()
+            lines = page.locator(".line").count()
+        except Exception:  # noqa: BLE001
+            partials, lines = -1, 0
+        check("no stale live lines after finals", partials == 0, f"{partials} partials, {lines} lines")
+
         browser.close()
 
     real_errors = [error for error in errors if "favicon" not in error.lower()]

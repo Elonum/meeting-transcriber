@@ -198,7 +198,7 @@ export default function App() {
               </div>
             )}
 
-            <Scene participants={stream.participants} />
+            <Scene participants={stream.participants} live={live} />
             <Transcript timeline={stream.timeline} participants={stream.participants} live={live} />
           </>
         )}

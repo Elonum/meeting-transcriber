@@ -113,8 +113,11 @@ class Session:
             if event.get("error"):
                 self.error = event["error"]
         elif kind == "participant":
+            # Merge, not replace: a later event may carry only a name or presence,
+            # and clobbering the rest would erase the face and the colour.
             part = event["participant"]
-            self.participants[part["id"]] = dict(part)
+            merged = {**self.participants.get(part["id"], {}), **part}
+            self.participants[part["id"]] = merged
         elif kind == "speech":
             part = self.participants.get(event["participant_id"])
             if part is not None:

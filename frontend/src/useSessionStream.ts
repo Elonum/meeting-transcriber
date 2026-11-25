@@ -51,7 +51,13 @@ function reducer(state: StreamState, action: Action): StreamState {
     case 'participant':
       return {
         ...state,
-        participants: { ...state.participants, [event.participant.id]: event.participant },
+        participants: {
+          ...state.participants,
+          [event.participant.id]: {
+            ...state.participants[event.participant.id],
+            ...event.participant,
+          },
+        },
       }
     case 'speech': {
       const participant = state.participants[event.participant_id]
@@ -83,8 +89,13 @@ function reducer(state: StreamState, action: Action): StreamState {
     case 'segment': {
       const segment = event.segment
       if (segment.final) {
+        // A final replaces the live line of the same speaker. The ids differ
+        // (`p-1-live` vs `p-1-52000`), so matching by id alone left stale
+        // italics behind for the rest of the meeting.
         const partials = { ...state.partials }
-        delete partials[segment.id]
+        for (const [id, item] of Object.entries(partials)) {
+          if (id === segment.id || item.participant_id === segment.participant_id) delete partials[id]
+        }
         return { ...state, finals: { ...state.finals, [segment.id]: segment }, partials }
       }
       return { ...state, partials: { ...state.partials, [segment.id]: segment } }

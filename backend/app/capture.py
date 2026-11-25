@@ -31,10 +31,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import re
+import tempfile
+import wave
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -42,12 +46,62 @@ log = logging.getLogger(__name__)
 #: Enough of a browser to be indistinguishable from a human, plus synthetic media
 #: so no hardware is needed. ``--enable-automation`` is removed at launch time
 #: (see ``ignore_default_args``) because the SaluteJazz client checks for it.
+#:
+#: ``--use-fake-device-for-media-stream`` on its own makes Chrome synthesize a
+#: beeping microphone signal, which the other participants hear as a drum. The
+#: agent has to unmute to make the SFU forward remote tracks, so it publishes a
+#: silent WAV instead: see :func:`ensure_silence_wav`.
 LAUNCH_ARGS = [
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
     "--autoplay-policy=no-user-gesture-required",
     "--disable-blink-features=AutomationControlled",
 ]
+
+#: Name a track gets before the room tells us who it is.
+UNNAMED_PREFIX = "Участник "
+
+#: ``Участник 2`` is ours; ``Участник проекта`` is somebody's real name.
+_UNNAMED_RE = re.compile(r"^Участник\s+\d+$")
+
+
+def is_placeholder(name: str | None) -> bool:
+    """True when the name is our own fallback, not something the product showed."""
+    return not name or bool(_UNNAMED_RE.match(name.strip()))
+
+
+def ensure_silence_wav(seconds: float = 1.0, rate: int = 48_000) -> Path:
+    """A silent WAV for ``--use-file-for-fake-audio-capture``, created once.
+
+    Chrome loops that file as the microphone input, so the agent publishes audio
+    (required for the SFU to send us the other tracks) without making a sound.
+    """
+    candidates = [Path(tempfile.gettempdir()) / "transcribe-silence.wav"]
+    candidates.append(Path(__file__).resolve().parents[2] / ".tmp" / "transcribe-silence.wav")
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_size > 44:
+                return path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(rate)
+                handle.writeframes(b"\x00\x00" * int(rate * seconds))
+            return path
+        except OSError:
+            continue
+    raise RuntimeError("cannot create a silent audio file for the fake microphone")
+
+
+def launch_args() -> list[str]:
+    """Browser flags, including the silent file that replaces the beeping mic."""
+    args = list(LAUNCH_ARGS)
+    try:
+        args.append(f"--use-file-for-fake-audio-capture={ensure_silence_wav()}")
+    except RuntimeError:
+        log.warning("agent: no silent audio file, the microphone may beep")
+    return args
 
 #: Runs before any page script: hides the automation marker and pre-sets the web
 #: client's own bypass flag. Without both, SaluteJazz shows "браузер не
@@ -190,9 +244,23 @@ CAPTURE_JS = r"""
   if (originalPC) {
     window.RTCPeerConnection = function (...args) {
       const pc = new originalPC(...args);
+      const endTrack = (track) => {
+        if (!track) return;
+        try { window.__trackEnded(track.id); } catch (e) { state.errors.push(String(e)); }
+      };
+      // One listener per connection, not per track.
+      pc.addEventListener('connectionstatechange', () => {
+        const connection = pc.connectionState;
+        if (connection === 'failed' || connection === 'closed' || connection === 'disconnected') {
+          try { pc.getReceivers().forEach((receiver) => endTrack(receiver.track)); } catch (e) {}
+        }
+      });
       pc.addEventListener('track', (event) => {
         const track = event.track;
         if (!track) return;
+        // A remote track that ends (the person hung up) is the clearest signal
+        // that they left; the participant list lags by a few seconds.
+        track.addEventListener('ended', () => endTrack(track));
         const streams = event.streams || [];
         const key = track.id;
         const element = Array.from(document.querySelectorAll('video, audio')).find((node) => {
@@ -223,6 +291,46 @@ CAPTURE_JS = r"""
   };
 
   // Video snapshots: the pipeline asks for a frame when it needs a face.
+  // Resolution goes by the *audio* track id, because the page may attach the
+  // video track to the same stream seconds later, when the person turns the
+  // camera on.
+  const videoElementFor = (key) => {
+    const entry = state.tracks.get(key);
+    const videoId = entry && entry.videoTrackId;
+    const videos = () => Array.from(document.querySelectorAll('video'));
+    if (videoId) {
+      const node = videos().find((video) => {
+        const stream = video.srcObject;
+        return stream && stream.getVideoTracks && stream.getVideoTracks().some((t) => t.id === videoId);
+      });
+      if (node) return node;
+    }
+    const node = videos().find((video) => {
+      const stream = video.srcObject;
+      if (!stream || !stream.getTracks) return false;
+      return stream.getTracks().some((t) => t.id === key);
+    });
+    if (node && entry) {
+      try {
+        const videoTrack = node.srcObject.getVideoTracks()[0];
+        if (videoTrack) entry.videoTrackId = videoTrack.id;
+      } catch (e) {}
+    }
+    return node || null;
+  };
+
+  window.__grabFaceForAudio = (key, maxWidth) => {
+    const node = videoElementFor(key);
+    if (!node || !node.videoWidth) return null;
+    const scale = Math.min(1, (maxWidth || 320) / node.videoWidth);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(node.videoWidth * scale);
+    canvas.height = Math.round(node.videoHeight * scale);
+    const context = canvas.getContext('2d');
+    context.drawImage(node, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.75);
+  };
+
   window.__grabFace = (trackId, maxWidth) => {
     const node = Array.from(document.querySelectorAll('video')).find((video) => {
       const stream = video.srcObject;
@@ -280,6 +388,21 @@ BLOCKER_SELECTORS = [
 ]
 
 
+#: Console noise that says nothing about the join and only clutters the UI.
+#: All of these come from the third-party client, not from the agent.
+CONSOLE_NOISE = (
+    "ScriptProcessorNode is deprecated",
+    "Wake Lock permission",
+    "Trying to init when instance already exists",
+    "Permissions policy violation: unload",
+    "Failed to load resource: the server responded with a status of 404",
+)
+
+
+def is_console_noise(text: str) -> bool:
+    return any(marker in text for marker in CONSOLE_NOISE)
+
+
 @dataclass(slots=True)
 class AudioChunk:
     track_id: str
@@ -294,6 +417,16 @@ class TrackInfo:
     name: str
     label: str
     video_track_id: str | None = None
+    present: bool = True
+
+
+@dataclass(slots=True)
+class ParticipantUpdate:
+    """A change in who is in the room, as far as a browser can know it."""
+
+    track_id: str
+    name: str | None = None
+    present: bool | None = None
 
 
 class BrowserAgent:
@@ -335,6 +468,15 @@ class BrowserAgent:
         self._tracks: dict[str, TrackInfo] = {}
         self._remote_names: list[str] = []
         self.track_events: asyncio.Queue[TrackInfo] = asyncio.Queue()
+        #: Who joined, got renamed or left while the meeting runs.
+        self.updates: asyncio.Queue[ParticipantUpdate] = asyncio.Queue()
+        #: True while at least one other person is in the room.
+        self.human_present = False
+        #: A participant list can flicker while the room re-renders, so a name has
+        #: to be missing this many polls in a row before we call it a departure.
+        self.absence_strikes = 2
+        self._strikes: dict[str, int] = {}
+        self._sync_task: asyncio.Task | None = None
         self.notes: list[str] = []
         self.crashed = False
         self.crash_reason: str | None = None
@@ -362,7 +504,7 @@ class BrowserAgent:
         self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
 
-        launch_args = list(LAUNCH_ARGS)
+        launch_flags = launch_args()
         channels = [self.channel] if self.channel else [None]
         last_error: Exception | None = None
         for channel in channels + [None]:
@@ -370,7 +512,7 @@ class BrowserAgent:
                 self._browser = await self._playwright.chromium.launch(
                     headless=self.headless,
                     channel=channel,
-                    args=launch_args,
+                    args=launch_flags,
                     # Playwright adds this by default and VCS clients detect it.
                     ignore_default_args=["--enable-automation"],
                 )
@@ -393,20 +535,19 @@ class BrowserAgent:
         self.page.on("pageerror", lambda error: self.notes.append(f"pageerror: {error}"))
         self.page.on("crash", lambda *_: self._mark_crashed("page crashed"))
         self.page.on("close", lambda *_: self._mark_crashed("page closed"))
-        self.page.on(
-            "console",
-            lambda message: self.notes.append(f"console.{message.type}: {message.text}")
-            if message.type in ("error", "warning")
-            else None,
-        )
+        self.page.on("console", self._on_console)
 
         await self.page.expose_binding("__submitAudio", self._on_audio)
         await self.page.expose_binding("__submitTrack", self._on_track)
+        await self.page.expose_binding("__trackEnded", self._on_track_ended)
         await self.page.add_init_script(CAPTURE_JS)
 
         log.info("agent: joining %s", self.url)
         await self.page.goto(self.url, wait_until="domcontentloaded", timeout=self.join_timeout_ms)
         await self._join()
+        # People join and leave after us; the room's participant list is the only
+        # source of truth a browser has, so watch it while the meeting runs.
+        self._sync_task = asyncio.create_task(self._sync_loop())
 
         try:
             await asyncio.wait_for(self.track_events.get(), timeout=20.0)
@@ -434,7 +575,11 @@ class BrowserAgent:
         room_ready = False
 
         while loop.time() < deadline:
-            if await self.page.locator('[data-testid="microphone"]').count():
+            # Either the microphone control or the participant list means we are
+            # inside: the product moves these controls around between releases.
+            if await self.page.locator('[data-testid="microphone"]').count() or await self.page.locator(
+                '[data-testid^="participantItem-"]'
+            ).count():
                 room_ready = True
                 break
 
@@ -482,14 +627,11 @@ class BrowserAgent:
 
         self.notes.append("entered the room")
         await self.page.wait_for_timeout(1200)
-        # Names first, then unmute: the first audio packet arrives the instant the
-        # microphone is published, and a track without a name is worse than a
-        # second of extra delay.
-        await self._read_participant_names()
+        await self.sync_participants()
         await self._unmute()
         await self.page.wait_for_timeout(800)
         if not self._remote_names:
-            await self._read_participant_names()
+            await self.sync_participants()
 
     async def _dismiss_blockers(self) -> None:
         """Press "continue in browser" if the client insists on its desktop app."""
@@ -518,7 +660,7 @@ class BrowserAgent:
             except Exception:  # noqa: BLE001
                 continue
 
-    async def _read_participant_names(self) -> None:
+    async def _read_participant_names(self) -> list[str]:
         """Participant names come from the tile's aria-label, minus our own tile."""
         try:
             names = await self.page.evaluate(
@@ -533,32 +675,89 @@ class BrowserAgent:
                   .map((item) => item.name)
                 """
             )
-            if isinstance(names, list) and names:
-                # Never label a remote track with our own display name.
-                self._remote_names = [
-                    str(name) for name in names if name and name != self.display_name
-                ]
-                self.notes.append(f"participants: {', '.join(self._remote_names)}")
-                self._apply_names_to_tracks()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 - the room UI is not always present
+            return []
+        if not isinstance(names, list):
+            return []
+        # Never label a remote track with our own display name.
+        return [str(name) for name in names if name and str(name) != self.display_name]
 
-    def _apply_names_to_tracks(self) -> None:
-        """Tracks open before the participant list renders; name them now."""
-        used: set[str] = set()
+    def sync_names(self, names: list[str]) -> list[ParticipantUpdate]:
+        """Reconcile the room's list with our tracks. Pure, so it can be tested.
+
+        Two jobs, both needed because the room changes after the join:
+
+        * a track that arrived before its tile was painted carries our fallback
+          name — give it the real one as soon as the room lists it;
+        * a name that disappears from the room means the person left. Their track
+          often stays alive at the SFU, so the DOM is the only signal.
+        """
+        clean = [name for name in names if name and name != self.display_name]
+        self._remote_names = clean
+        self.human_present = bool(clean)
+
+        updates: list[ParticipantUpdate] = []
+
+        used = {info.name for info in self._tracks.values() if not is_placeholder(info.name)}
         for info in self._tracks.values():
-            if info.name and not info.name.startswith("Участник"):
-                used.add(info.name)
-        for info in self._tracks.values():
-            if info.name and not info.name.startswith("Участник"):
+            if not is_placeholder(info.name):
                 continue
-            for candidate in self._remote_names:
-                if candidate not in used:
-                    info.name = candidate
-                    used.add(candidate)
-                    break
+            candidate = next((name for name in clean if name not in used), None)
+            if candidate is None:
+                break
+            info.name = candidate
+            info.present = True
+            used.add(candidate)
+            updates.append(ParticipantUpdate(track_id=info.track_id, name=candidate, present=True))
+
+        listed = set(clean)
+        for info in self._tracks.values():
+            if is_placeholder(info.name):
+                continue
+            if info.name in listed:
+                self._strikes.pop(info.track_id, None)
+                if not info.present:
+                    info.present = True
+                    updates.append(ParticipantUpdate(track_id=info.track_id, present=True))
+                continue
+            if not info.present:
+                continue
+            strikes = self._strikes.get(info.track_id, 0) + 1
+            self._strikes[info.track_id] = strikes
+            if strikes >= self.absence_strikes:
+                info.present = False
+                updates.append(ParticipantUpdate(track_id=info.track_id, present=False))
+
+        return updates
+
+    async def sync_participants(self) -> list[ParticipantUpdate]:
+        """Read the room and publish what changed."""
+        updates = self.sync_names(await self._read_participant_names())
+        for update in updates:
+            self._safe_put(self.updates, update)
+            log.info(
+                "agent: %s %s",
+                "left" if update.present is False else "updated",
+                self._tracks[update.track_id].name if update.track_id in self._tracks else update.track_id,
+            )
+        return updates
+
+    async def _sync_loop(self, interval_s: float = 3.0) -> None:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                await self.sync_participants()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a broken page must not kill the session
+                log.debug("agent: participant sync failed", exc_info=True)
 
     async def close(self) -> None:
+        if self._sync_task is not None:
+            self._sync_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._sync_task
+            self._sync_task = None
         try:
             if self.page is not None:
                 await self.page.evaluate("window.__probeAgentStop && window.__probeAgentStop()")
@@ -575,6 +774,16 @@ class BrowserAgent:
                 await self._playwright.stop()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _on_console(self, message: Any) -> None:
+        """Keep join diagnostics, drop the warnings every browser prints."""
+        if message.type not in ("error", "warning"):
+            return
+        text = f"console.{message.type}: {message.text}"
+        if is_console_noise(message.text):
+            log.debug("agent: %s", text)
+            return
+        self.notes.append(text)
 
     # -- callbacks from the page --------------------------------------------
 
@@ -607,7 +816,7 @@ class BrowserAgent:
             # Fall back to the participant list from the room UI, in join order.
             used = {info.name for info in self._tracks.values()}
             remaining = [item for item in self._remote_names if item not in used]
-            name = remaining[0] if remaining else f"Участник {len(self._tracks) + 1}"
+            name = remaining[0] if remaining else f"{UNNAMED_PREFIX}{len(self._tracks) + 1}"
         info = TrackInfo(
             track_id=track_id,
             name=name,
@@ -617,6 +826,16 @@ class BrowserAgent:
         self._tracks[track_id] = info
         log.info("agent: track %s -> %s", track_id[:8], name)
         self._safe_put(self.track_events, info)
+
+    def _on_track_ended(self, source: Any, track_id: str) -> None:
+        """A closed track is a clear "left" signal, earlier than the DOM list."""
+        del source
+        info = self._tracks.get(str(track_id))
+        if info is None or not info.present:
+            return
+        info.present = False
+        log.info("agent: track %s ended (%s)", info.track_id[:8], info.name)
+        self._safe_put(self.updates, ParticipantUpdate(track_id=info.track_id, present=False))
 
     def _push_chunk(self, chunk: AudioChunk) -> None:
         try:
@@ -641,9 +860,15 @@ class BrowserAgent:
             yield await self._queue.get()
 
     async def grab_face(self, track_id: str, max_width: int = 320) -> str | None:
+        """A JPEG frame of the participant behind this audio track, if any.
+
+        The key is the audio track id on purpose: a camera switched on later
+        joins the same stream, and the video id we saw at join time would be
+        stale by then.
+        """
         try:
             return await self.page.evaluate(
-                "([id, width]) => window.__grabFace ? window.__grabFace(id, width) : null",
+                "([id, width]) => window.__grabFaceForAudio ? window.__grabFaceForAudio(id, width) : null",
                 [track_id, max_width],
             )
         except Exception:  # noqa: BLE001

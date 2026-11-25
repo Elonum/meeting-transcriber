@@ -108,6 +108,7 @@ def new_participant(
         "has_video": has_video,
         "color": PALETTE[color_index % len(PALETTE)],
         "speaking": False,
+        "present": True,
         "face_status": "unknown",
         "face_confidence": None,
         "thumbnail": None,

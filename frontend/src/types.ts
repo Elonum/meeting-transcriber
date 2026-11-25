@@ -40,6 +40,8 @@ export interface Participant {
   has_video: boolean
   color: string
   speaking: boolean
+  /** False once the person leaves; the tile disappears, the transcript keeps them. */
+  present?: boolean
   face_status: FaceStatus
   face_confidence: number | null
   thumbnail: string | null
