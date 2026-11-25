@@ -1,149 +1,140 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { CreateSessionPayload } from '../types'
+import { parseMeetingLink } from '../link'
 import { toLocalInputValue } from '../format'
-
-type Mode = 'mock' | 'jazz'
 
 interface NewSessionFormProps {
   busy: boolean
   onCreate: (payload: CreateSessionPayload) => Promise<void>
 }
 
+const PLACEHOLDER = 'https://salutejazz.ru/calls/xxxxxx?psw=…'
+
 export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
   const [url, setUrl] = useState('')
+  const [password, setPassword] = useState('')
   const [title, setTitle] = useState('')
-  const [duration, setDuration] = useState('')
   const [startAt, setStartAt] = useState('')
-  const [speed, setSpeed] = useState('1')
-  const [mode, setMode] = useState<Mode>('mock')
-  const [showBrowser, setShowBrowser] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const live = mode === 'jazz'
+  const link = useMemo(() => parseMeetingLink(url), [url])
+  const trimmedUrl = url.trim()
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
-    if (!/^https?:\/\/\S+$/i.test(url.trim())) {
-      setError('Нужна полная ссылка на встречу, например https://jazz.sber.ru/…')
+
+    if (!/^https?:\/\/\S+$/i.test(trimmedUrl)) {
+      setError('Вставьте адрес видеовстречи — он начинается с https://')
       return
     }
+    if (!link.recognized) {
+      setError('Это не похоже на ссылку SaluteJazz: ожидается …/calls/xxxxxx')
+      return
+    }
+    if (!link.hasPassword && !password.trim()) {
+      setError('В ссылке нет пароля — введите пароль видеовстречи')
+      return
+    }
+
     try {
       await onCreate({
-        meeting_url: url.trim(),
+        meeting_url: trimmedUrl,
         title: title.trim() || null,
-        duration_min: duration ? Number(duration) : null,
+        password: link.hasPassword ? null : password.trim(),
         start_at: startAt ? new Date(startAt).toISOString() : null,
-        pipeline: mode,
-        speed: live ? 1 : Number(speed),
-        headless: !showBrowser,
+        pipeline: 'jazz',
       })
       setUrl('')
+      setPassword('')
       setTitle('')
-      setDuration('')
       setStartAt('')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось запустить сессию')
+      setError(cause instanceof Error ? cause.message : 'Не удалось подключиться')
     }
   }
 
   return (
     <form className="card form" onSubmit={submit}>
       <h2 className="card__title">Новая встреча</h2>
-      <p className="card__hint">
-        {live
-          ? 'Агент откроет встречу в браузере, будет слушать каждого участника отдельно и распознавать речь локально.'
-          : 'Агент войдёт по ссылке и начнёт транскрибацию.'}
-      </p>
 
       <label className="field">
-        <span>Ссылка на встречу</span>
+        <span>Адрес видеовстречи</span>
         <input
           type="url"
-          placeholder="https://jazz.sber.ru/…"
+          inputMode="url"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={PLACEHOLDER}
           value={url}
           onChange={(event) => setUrl(event.target.value)}
           required
         />
       </label>
 
-      <label className="field">
-        <span>Режим</span>
-        <select value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
-          <option value="mock">Демо-сценарий (без подключения)</option>
-          <option value="jazz">Живая встреча (браузерный агент)</option>
-        </select>
-      </label>
-
-      <label className="field">
-        <span>Название <em>необязательно</em></span>
-        <input
-          type="text"
-          placeholder="Планёрка по транскрибации"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-        />
-      </label>
-
-      <label className="field">
-        <span>Начать в <em>пусто — подключиться сразу</em></span>
-        <input
-          type="datetime-local"
-          value={startAt}
-          min={toLocalInputValue(Date.now())}
-          onChange={(event) => setStartAt(event.target.value)}
-        />
-      </label>
-
-      <div className="field-row">
-        <label className="field">
-          <span>Лимит, мин <em>необязательно</em></span>
-          <input
-            type="number"
-            min={1}
-            max={600}
-            placeholder="—"
-            value={duration}
-            onChange={(event) => setDuration(event.target.value)}
-          />
-        </label>
-
-        {live ? (
-          <label className="field field--check">
-            <span>Браузер</span>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={showBrowser}
-                onChange={(event) => setShowBrowser(event.target.checked)}
-              />
-              <span>показывать окно</span>
-            </label>
-          </label>
-        ) : (
-          <label className="field">
-            <span>Темп демо</span>
-            <select value={speed} onChange={(event) => setSpeed(event.target.value)}>
-              <option value="1">1× реальное время</option>
-              <option value="4">4× быстрее</option>
-              <option value="10">10× быстрее</option>
-            </select>
-          </label>
-        )}
-      </div>
-
-      {live && (
-        <p className="form__note">
-          Речь распознаётся локально (faster-whisper), звук никуда не уходит. Первый запуск
-          подгружает модель и занимает до минуты.
+      {trimmedUrl && (
+        <p className="hint">
+          {link.recognized ? (
+            <>
+              <span className="chip">Комната {link.code}</span>
+              {link.hasPassword ? (
+                <span className="hint__text">пароль уже в ссылке</span>
+              ) : (
+                <span className="hint__text hint__text--warn">нужен пароль</span>
+              )}
+            </>
+          ) : (
+            <span className="hint__text hint__text--warn">
+              не нашли код комнаты — проверьте адрес
+            </span>
+          )}
         </p>
       )}
+
+      {(!link.hasPassword || !trimmedUrl) && (
+        <label className="field">
+          <span>
+            Пароль видеовстречи <em>если его нет в ссылке</em>
+          </span>
+          <input
+            type="text"
+            autoComplete="off"
+            placeholder="например, wniols5t"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+      )}
+
+      <details className="advanced">
+        <summary>Запланировать</summary>
+        <div className="advanced__body">
+          <label className="field">
+            <span>Начать в <em>пусто — подключиться сразу</em></span>
+            <input
+              type="datetime-local"
+              value={startAt}
+              min={toLocalInputValue(Date.now())}
+              onChange={(event) => setStartAt(event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Название <em>для истории</em></span>
+            <input
+              type="text"
+              placeholder="Планёрка по транскрибации"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+        </div>
+      </details>
 
       {error && <p className="form__error">{error}</p>}
 
       <button type="submit" className="primary" disabled={busy}>
-        {busy ? 'Запускаю агента…' : 'Подключить агента'}
+        {busy ? 'Подключаюсь…' : 'Подключить агента'}
       </button>
     </form>
   )

@@ -71,6 +71,7 @@ export interface CreateSessionPayload {
   duration_min?: number | null
   start_at?: string | null
   pipeline?: 'mock' | 'jazz'
+  password?: string | null
   speed?: number
   headless?: boolean
   model?: string

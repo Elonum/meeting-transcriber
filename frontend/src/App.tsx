@@ -2,16 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createSession, listSessions, stopSession } from './api'
 import type { CreateSessionPayload, SessionInfo } from './types'
 import { useSessionStream } from './useSessionStream'
-import { formatClock, formatWhen, stateLabel } from './format'
+import { formatDuration, useElapsed } from './useElapsed'
+import { roomLabel } from './link'
+import { stateLabel } from './format'
 import { NewSessionForm } from './components/NewSessionForm'
 import { SessionList } from './components/SessionList'
-import { ExportPanel } from './components/ExportPanel'
+import { ExportMenu } from './components/ExportMenu'
 import { Scene } from './components/Scene'
 import { Transcript } from './components/Transcript'
 
+function sessionFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get('session')
+}
+
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(sessionFromUrl)
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -21,6 +27,7 @@ export default function App() {
     try {
       const { sessions: list } = await listSessions()
       setSessions(list)
+      setLoadError(null)
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : 'Сервер недоступен')
     }
@@ -35,10 +42,23 @@ export default function App() {
     [stream.session, sessions, activeId],
   )
 
-  // Keep the sidebar in sync when a streamed session changes state.
+  // Keep the list in sync when a streamed session changes state.
   useEffect(() => {
     if (stream.session) void refresh()
   }, [stream.session?.state, refresh, stream.session])
+
+  // A session link is shareable: keep it in the address bar.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (activeId) url.searchParams.set('session', activeId)
+    else url.searchParams.delete('session')
+    window.history.replaceState(null, '', url.toString())
+  }, [activeId])
+
+  const elapsed = useElapsed(
+    active?.started_at_ms,
+    active?.state === 'live' || active?.state === 'connecting',
+  )
 
   const onCreate = async (payload: CreateSessionPayload) => {
     setBusy(true)
@@ -67,13 +87,16 @@ export default function App() {
           <span className="brand__mark">T</span>
           <div>
             <strong>Transcribe</strong>
-            <small>онлайн-транскрибация встреч</small>
+            <small>протокол встречи SaluteJazz</small>
           </div>
         </header>
 
         <NewSessionForm busy={busy} onCreate={onCreate} />
-        <SessionList sessions={sessions} activeId={activeId} onSelect={setActiveId} onRefresh={refresh} />
-        <ExportPanel session={active} />
+        <SessionList sessions={sessions} activeId={activeId} onSelect={setActiveId} />
+
+        <footer className="sidebar__foot">
+          Речь распознаётся локально · звук не покидает этот компьютер
+        </footer>
       </aside>
 
       <main className="workspace">
@@ -81,38 +104,44 @@ export default function App() {
 
         {!active ? (
           <div className="welcome">
-            <h1>Слушайте встречу, получайте протокол</h1>
+            <h1>Встреча превращается в протокол</h1>
             <p>
-              Укажите ссылку на встречу Jazz — агент подключится как участник, распознает речь, определит
-              говорящих и покажет их лица. Всё, что он услышит, попадёт в файл.
+              Вставьте адрес видеовстречи из SaluteJazz — агент войдёт в комнату как участник,
+              распознает речь, определит, кто говорит, и покажет лица.
             </p>
-            <ul>
-              <li>Текст появляется в реальном времени, промежуточные гипотезы — серым.</li>
-              <li>Спикер определяется по отдельной аудиодорожке участника, а не догадками.</li>
-              <li>Экспорт: SRT, VTT, Markdown, TXT, JSON плюс журнал событий.</li>
-            </ul>
+            <ol className="steps">
+              <li>
+                <strong>Адрес.</strong> Скопируйте «Адрес видеовстречи» из приглашения. Пароль обычно
+                уже внутри ссылки.
+              </li>
+              <li>
+                <strong>Подключение.</strong> Агент подключается за 10–20 секунд и включает микрофон,
+                иначе платформа не передаёт звук.
+              </li>
+              <li>
+                <strong>Протокол.</strong> Реплики идут в реальном времени; по окончании скачайте SRT,
+                Markdown или JSON.
+              </li>
+            </ol>
           </div>
         ) : (
           <>
             <header className="topbar">
               <div className="topbar__title">
-                <h1>{active.title || 'Встреча'}</h1>
-                <a className="topbar__url" href={active.meeting_url} target="_blank" rel="noreferrer">
-                  {active.meeting_url}
-                </a>
+                <h1>{active.title || `Встреча ${roomLabel(active.meeting_url)}`}</h1>
+                <span className="topbar__room">
+                  комната {roomLabel(active.meeting_url)}
+                  {active.pipeline === 'mock' && ' · демо'}
+                </span>
               </div>
 
               <div className="topbar__actions">
+                {(live || waiting) && <span className="timer">{formatDuration(elapsed)}</span>}
                 <span className={`pill pill--${active.state}`}>
                   <span className={`dot dot--${active.state === 'live' ? 'live' : 'idle'}`} />
                   {stateLabel(active.state)}
                 </span>
-                <span className="topbar__meta">
-                  {waiting && active.start_at_ms
-                    ? `агент подключится ${formatWhen(active.start_at_ms)}`
-                    : `начало ${formatClock(active.started_at_ms)} · ${stream.finals} реплик`}
-                  {!stream.connected && active.state === 'live' && ' · переподключение…'}
-                </span>
+                <ExportMenu session={active} />
                 {(live || waiting) && (
                   <button type="button" className="danger" onClick={onStop}>
                     {waiting ? 'Отменить' : 'Остановить'}
@@ -121,16 +150,16 @@ export default function App() {
               </div>
             </header>
 
-            {active.error && <div className="banner banner--error">Ошибка сессии: {active.error}</div>}
+            {active.error && <div className="banner banner--error">Ошибка: {active.error}</div>}
             {waiting && active.start_at_ms && (
               <div className="banner banner--info">
-                Агент подключится {formatWhen(active.start_at_ms)}. До этого момента ничего не записывается —
-                сессию можно отменить.
+                Агент подключится позже — до этого момента ничего не записывается. Сессию можно
+                отменить.
               </div>
             )}
             {active.pipeline === 'mock' && (
               <div className="banner banner--info">
-                Демо-пайплайн: речь синтезирована, но протокол, спикеры, лица и экспорт — настоящие.
+                Демо-сессия: речь синтезирована, протокол и экспорт — настоящие.
               </div>
             )}
 

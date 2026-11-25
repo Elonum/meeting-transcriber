@@ -47,29 +47,35 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
       <div className="transcript__head">
         <h2>
           Транскрипт
-          {live && <span className="live-badge"><span className="dot dot--live" />запись</span>}
+          {live && (
+            <span className="live-badge">
+              <span className="dot dot--live" />
+              запись
+            </span>
+          )}
         </h2>
 
         <div className="transcript__tools">
           <input
             className="search"
             type="search"
-            placeholder="Поиск по тексту…"
+            placeholder="Поиск по тексту"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          {query && <span className="search__count">{filtered.length} совпадений</span>}
+          {query && <span className="search__count">{filtered.length}</span>}
           <button
             type="button"
-            className={`ghost${follow ? ' ghost--on' : ''}`}
+            className={`ghost ghost--icon${follow ? ' ghost--on' : ''}`}
             onClick={() => {
               setFollow(true)
               const node = scroller.current
               if (node) node.scrollTop = node.scrollHeight
             }}
             title="Следовать за новыми репликами"
+            aria-label="Автоскролл"
           >
-            ↓ автоскролл
+            ↓
           </button>
         </div>
       </div>
@@ -77,7 +83,9 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
       <div className="transcript__feed" ref={scroller} onScroll={onScroll}>
         {filtered.length === 0 && (
           <p className="feed__empty">
-            {query ? 'Ничего не найдено.' : 'Пока тихо. Реплики появятся, как только участники начнут говорить.'}
+            {query
+              ? 'Ничего не найдено.'
+              : 'Тишина. Реплики появятся, как только участники начнут говорить.'}
           </p>
         )}
 
@@ -104,9 +112,6 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
                   {speaker?.display_name ?? 'Спикер'}
                 </span>
                 <time className="line__time">{formatMs(item.segment.start_ms)}</time>
-                {!partial && item.segment.confidence != null && (
-                  <span className="line__conf">{(item.segment.confidence * 100).toFixed(0)}%</span>
-                )}
               </div>
               <p className="line__text">
                 {item.segment.text}

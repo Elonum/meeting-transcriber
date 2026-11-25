@@ -1,48 +1,43 @@
 import type { SessionInfo } from '../types'
 import { formatWhen, stateLabel } from '../format'
+import { roomLabel } from '../link'
 
 interface SessionListProps {
   sessions: SessionInfo[]
   activeId: string | null
   onSelect: (id: string) => void
-  onRefresh: () => void
 }
 
-export function SessionList({ sessions, activeId, onSelect, onRefresh }: SessionListProps) {
-  return (
-    <section className="card">
-      <div className="card__head">
-        <h2 className="card__title">Сессии</h2>
-        <button type="button" className="ghost" onClick={onRefresh} title="Обновить список">
-          ⟳
-        </button>
-      </div>
+/** Compact history: only what helps pick a previous meeting. */
+export function SessionList({ sessions, activeId, onSelect }: SessionListProps) {
+  if (sessions.length === 0) return null
 
-      {sessions.length === 0 ? (
-        <p className="card__hint">Пока пусто — запустите первую встречу.</p>
-      ) : (
-        <ul className="sessions">
-          {sessions.map((session) => (
-            <li key={session.id}>
-              <button
-                type="button"
-                className={`session${session.id === activeId ? ' session--active' : ''}`}
-                onClick={() => onSelect(session.id)}
-              >
-                <span className={`session__state session__state--${session.state}`}>
-                  {stateLabel(session.state)}
-                </span>
-                <span className="session__title">{session.title || 'Без названия'}</span>
-                <span className="session__meta">
-                  {session.state === 'scheduled' && session.start_at_ms
-                    ? `старт ${formatWhen(session.start_at_ms)}`
-                    : `${formatWhen(session.started_at_ms)} · ${session.segments_count} реплик`}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+  return (
+    <section className="history">
+      <h2 className="card__title">История</h2>
+      <ul className="history__list">
+        {sessions.slice(0, 8).map((session) => (
+          <li key={session.id}>
+            <button
+              type="button"
+              className={`history__item${session.id === activeId ? ' history__item--active' : ''}`}
+              onClick={() => onSelect(session.id)}
+              title={session.meeting_url}
+            >
+              <span className="history__room">{roomLabel(session.meeting_url)}</span>
+              <span className="history__title">{session.title || 'Без названия'}</span>
+              <span className="history__meta">
+                {session.state === 'scheduled' && session.start_at_ms
+                  ? formatWhen(session.start_at_ms)
+                  : formatWhen(session.started_at_ms)}
+                {' · '}
+                {stateLabel(session.state).toLowerCase()}
+                {session.segments_count > 0 && ` · ${session.segments_count} репл.`}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
