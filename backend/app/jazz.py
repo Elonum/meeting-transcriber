@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from . import protocol as p
@@ -21,13 +22,17 @@ from .session import Emitter
 
 log = logging.getLogger(__name__)
 
-#: Camera watcher schedule: first check after 5 s, then every 10 s for four
-#: minutes. People switch a camera on whenever they feel like it, so "no frame
-#: yet" must never turn into a permanent "без камеры" badge.
-FACE_FIRST_DELAY_S = 5.0
-FACE_INTERVAL_S = 10.0
-FACE_ATTEMPTS = 24
-FACE_DELAYS = (FACE_FIRST_DELAY_S,) + (FACE_INTERVAL_S,) * (FACE_ATTEMPTS - 1)
+#: Camera watcher: every 10 s for the first two minutes, then every 30 s while
+#: the person stays. Frequent early checks catch a camera switched on late;
+#: rare later ones let a better frame replace a poor one without spamming events.
+FACE_FAST_INTERVAL_S = 10.0
+FACE_FAST_ATTEMPTS = 12
+FACE_SLOW_INTERVAL_S = 30.0
+#: Announce "без камеры" only after this long with no frame at all.
+FACE_ABSENCE_AFTER_S = 240.0
+#: A new picture must be this much better to replace the current one.
+FACE_CONFIDENCE_STEP = 0.08
+
 
 
 def recording_enabled() -> bool:
@@ -373,45 +378,87 @@ class JazzPipeline:
                 )
             )
 
+    def _face_schedule(self) -> Iterator[float]:
+        """Frequent at first, then rare: a face is allowed to improve over time."""
+        for _ in range(FACE_FAST_ATTEMPTS):
+            yield FACE_FAST_INTERVAL_S
+        while True:
+            yield FACE_SLOW_INTERVAL_S
+
     async def _face_loop(
         self,
         participant_id: str,
         track_id: str,
-        delays: tuple[float, ...] = FACE_DELAYS,
+        *,
+        delays: Iterable[float] | None = None,
+        absence_after_s: float = FACE_ABSENCE_AFTER_S,
     ) -> None:
-        """Grab a few frames per participant and report what was found.
+        """Watch a participant's camera and keep the best frame.
 
-        The frame itself is the fallback: even with no detector installed the UI
-        shows the participant's real video instead of an empty avatar, which is
-        honest — a frame arrived, no face was identified.
+        The first useful frame used to win forever, so a single bad moment — a
+        turned head, a 40% detection, a blurry frame — stayed in the tile for the
+        whole meeting. The loop now runs for as long as the participant is here
+        and replaces the picture only when the new one is better:
 
-        Retrying matters: a camera switched on a minute into the call must still
-        put a face in the tile, and the first attempts simply see nothing.
+        * a detected face replaces nothing or a weaker face (by a clear margin);
+        * a plain frame is shown once, only while no face is known yet;
+        * "без камеры" is announced only after the camera gave us nothing at all.
+
+        The frame itself is also the honest fallback: with no detector installed
+        the UI shows the real video instead of an empty avatar.
         """
         assert self._emit is not None
-        for delay in delays:
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        best_confidence = 0.0
+        has_face = False
+        has_frame = False
+        announced_absence = False
+
+        for delay in delays if delays is not None else self._face_schedule():
             await asyncio.sleep(delay)
             frame = await self.agent.grab_face(track_id)
+
             if not frame:
+                if (
+                    not has_frame
+                    and not announced_absence
+                    and loop.time() - started >= absence_after_s
+                ):
+                    announced_absence = True
+                    await self._emit(p.ev_face(p.now_ms() - self._clock_start, participant_id, "none"))
                 continue
+
             detection = None
             if self.detector.name != "none":
                 try:
                     detection = await asyncio.to_thread(self.detector.detect, frame)
                 except Exception:  # noqa: BLE001 - a bad frame must not stop the meeting
                     log.exception("face detection failed")
-            at = p.now_ms() - self._clock_start
-            if detection is not None:
+
+            if detection is None:
+                if not has_frame and not has_face:
+                    has_frame = True
+                    await self._emit(p.ev_face(p.now_ms() - self._clock_start, participant_id, "frame", None, frame))
+                continue
+
+            improved = detection.confidence >= best_confidence + FACE_CONFIDENCE_STEP
+            if has_face and not improved:
+                continue
+            if improved or not has_face:
+                has_face = True
+                best_confidence = max(best_confidence, detection.confidence)
                 self._stats["faces"] += 1
                 await self._emit(
-                    p.ev_face(at, participant_id, "detected", detection.confidence, detection.thumbnail)
+                    p.ev_face(
+                        p.now_ms() - self._clock_start,
+                        participant_id,
+                        "detected",
+                        detection.confidence,
+                        detection.thumbnail,
+                    )
                 )
-            else:
-                await self._emit(p.ev_face(at, participant_id, "frame", None, frame))
-            return
 
-        # Nothing after every attempt: the camera stayed off.
-        await self._emit(p.ev_face(p.now_ms() - self._clock_start, participant_id, "none"))
 
     async def _publish(self, track_id: str, events: list[ASREvent], at: Any) -> None:
         assert self._emit is not None

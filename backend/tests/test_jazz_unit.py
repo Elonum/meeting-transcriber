@@ -280,7 +280,8 @@ def test_face_loop_reports_a_frame_when_the_camera_turns_on_later() -> None:
     faces = [e for e in events if e["type"] == "face"]
     assert len(faces) == 1
     assert faces[0]["status"] == "frame"
-    assert agent.asked == ["track-1", "track-1"], "the audio track id is the lookup key"
+    assert set(agent.asked) == {"track-1"}, "the audio track id is the lookup key"
+    assert len(agent.asked) == 3, "the watcher keeps going, it does not stop at the first frame"
 
 
 def test_face_loop_reports_no_camera_after_every_attempt() -> None:
@@ -288,7 +289,7 @@ def test_face_loop_reports_no_camera_after_every_attempt() -> None:
     pipeline = JazzPipeline("https://salutejazz.ru/calls/abc123", agent=agent)
     events = collect(pipeline)
 
-    asyncio.run(pipeline._face_loop("p-1", "track-1", delays=(0, 0, 0)))
+    asyncio.run(pipeline._face_loop("p-1", "track-1", delays=(0, 0, 0), absence_after_s=0))
 
     faces = [e for e in events if e["type"] == "face"]
     assert [f["status"] for f in faces] == ["none"]
