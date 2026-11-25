@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from app.asr import ParticipantASR, SpeechDetector, float_to_pcm16, pcm16_to_float
+from app.asr import ParticipantASR, SpeechDetector, Transcript, float_to_pcm16, pcm16_to_float
 
 RATE = 16_000
 
@@ -94,12 +94,16 @@ def test_pcm_roundtrip() -> None:
 class FakeRunner:
     """Stands in for Whisper so the event logic is tested without a model."""
 
+    language: str | None = None  # auto-detection, like a default WhisperRunner
+
     def __init__(self) -> None:
         self.calls: list[bool] = []
 
-    def transcribe(self, audio: np.ndarray, *, greedy: bool = False) -> str:
+    def transcribe(
+        self, audio: np.ndarray, *, greedy: bool = False, language: str | None = None
+    ) -> Transcript:
         self.calls.append(greedy)
-        return "проверочный текст"
+        return Transcript(text="проверочный текст", language="ru")
 
 
 def test_partial_then_final() -> None:

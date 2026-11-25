@@ -57,7 +57,7 @@ def test_finals_never_run_in_parallel() -> None:
 
     def worker() -> None:
         try:
-            results.append(runner.transcribe(audio))
+            results.append(runner.transcribe(audio).text)
         except BaseException as error:  # noqa: BLE001 - the test asserts on it
             errors.append(error)
 
@@ -79,7 +79,7 @@ def test_greedy_partial_is_dropped_when_busy() -> None:
 
     with runner._infer_lock:
         started = time.perf_counter()
-        text = runner.transcribe(audio, greedy=True)
+        text = runner.transcribe(audio, greedy=True).text
         elapsed = time.perf_counter() - started
 
     assert text == ""

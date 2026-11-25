@@ -129,6 +129,10 @@ class StartRequest(BaseModel):
     password: str | None = Field(
         None, description="Пароль встречи, если ссылка без встроенного ?psw="
     )
+    language: Literal["auto", "ru", "en"] = Field(
+        "auto",
+        description="Язык речи: auto — определять по фразе, ru/en — зафиксировать",
+    )
 
     @field_validator("meeting_url")
     @classmethod
@@ -221,17 +225,22 @@ async def logs(lines: int = 200) -> Response:
 
 
 @app.get("/api/sessions")
-async def list_sessions(q: str | None = None) -> dict:
-    """History, newest first. ``q`` searches titles, links, names and speech."""
+async def list_sessions(q: str | None = None, limit: int = 50) -> dict:
+    """History, newest first. ``q`` searches titles, links, names and speech.
+
+    ``total`` is the number of matches before the limit, so the interface can say
+    "показаны последние 50 из 90" instead of silently hiding the rest.
+    """
     query = (q or "").strip()
     results = manager.search(query)
+    page = max(1, min(limit, 200))
     sessions = []
-    for session in results:
+    for session in results[:page]:
         item = session.as_dict()
         if query:
             item["snippet"] = session.snippet(query)
         sessions.append(item)
-    return {"sessions": sessions, "query": query, "total": len(sessions)}
+    return {"sessions": sessions, "query": query, "total": len(results), "limit": page}
 
 
 def _build_pipeline(
@@ -242,11 +251,18 @@ def _build_pipeline(
     model: str,
     speed: float,
     password: str | None = None,
+    language: str | None = None,
 ):
     if pipeline == "jazz":
         from .jazz import JazzPipeline
 
-        return JazzPipeline(meeting_url, headless=headless, model=model, password=password)
+        return JazzPipeline(
+            meeting_url,
+            headless=headless,
+            model=model,
+            password=password,
+            language=None if language in (None, "auto") else language,
+        )
     return MockPipeline(meeting_url, speed=speed)
 
 
@@ -270,6 +286,7 @@ async def create_session(payload: StartRequest) -> dict:
         model=payload.model,
         speed=payload.speed,
         password=payload.password,
+        language=payload.language,
     )
     session = manager.create(
         payload.meeting_url,
@@ -283,6 +300,7 @@ async def create_session(payload: StartRequest) -> dict:
             "model": payload.model,
             "speed": payload.speed,
             "password": payload.password,
+            "language": payload.language,
         },
     )
     # Give the agent somewhere to save a screenshot when the join goes wrong.

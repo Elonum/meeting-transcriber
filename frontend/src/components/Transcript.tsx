@@ -101,6 +101,7 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
 
           const speaker = byId[item.segment.participant_id]
           const partial = item.kind === 'partial'
+          const language = item.segment.language
           return (
             <article
               key={item.id}
@@ -112,6 +113,11 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
                   {speaker?.display_name ?? 'Спикер'}
                 </span>
                 <time className="line__time">{formatMs(item.segment.start_ms)}</time>
+                {language && language !== 'ru' && (
+                  <span className="line__lang" title={`Язык фразы: ${language}`}>
+                    {language.toUpperCase()}
+                  </span>
+                )}
               </div>
               <p className="line__text">
                 {item.segment.text}

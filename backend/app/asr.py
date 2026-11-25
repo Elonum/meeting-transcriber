@@ -73,6 +73,32 @@ class ASREvent:
     text: str = ""
     start_ms: int = 0
     end_ms: int = 0
+    #: Language the utterance was spoken in, as detected by Whisper.
+    language: str | None = None
+
+
+#: Vocabulary that Whisper otherwise guesses: the product name came back as
+#: "Джесс" without it. A mixed RU/EN glossary keeps both languages intact.
+DEFAULT_PROMPT = (
+    "SaluteJazz, Jazz, транскрибация, transcription, планёрка, deadline, спикер, реплики."
+)
+
+
+def prompt_from_env(default: str | None = DEFAULT_PROMPT) -> str | None:
+    """``TRANSCRIBE_PROMPT`` overrides the glossary; an empty value disables it."""
+    value = os.environ.get("TRANSCRIBE_PROMPT")
+    if value is None:
+        return default
+    return value.strip() or None
+
+
+@dataclass(slots=True)
+class Transcript:
+    """One transcription call: the text plus the language it was spoken in."""
+
+    text: str = ""
+    language: str | None = None
+    probability: float | None = None
 
 
 @dataclass(slots=True)
@@ -264,14 +290,16 @@ class WhisperRunner:
         *,
         device: str = "auto",
         compute_type: str | None = None,
-        language: str = "ru",
+        language: str | None = None,
         beam_size: int = 5,
+        prompt: str | None = None,
     ) -> None:
         self.model_name = model_name
         self.device = device
         self.compute_type = compute_type
         self.language = language
         self.beam_size = beam_size
+        self.prompt = prompt
         self.resolved: str | None = None
         self._model: Any = None
         self._lock = threading.Lock()  # guards lazy model construction
@@ -305,39 +333,60 @@ class WhisperRunner:
             log.info("whisper ready: %s (%s)", self.model_name, self.resolved)
             return self._model
 
-    def transcribe(self, audio: np.ndarray, *, greedy: bool = False) -> str:
+    def transcribe(
+        self,
+        audio: np.ndarray,
+        *,
+        greedy: bool = False,
+        language: str | None = None,
+    ) -> Transcript:
         """Transcribe one utterance.
 
         ctranslate2 models are not thread-safe, and several participants are
         transcribed from different worker threads. Finals therefore wait for the
         lock; interim revisions give up immediately instead of queueing up behind
         the final, which would turn a live transcript into a backlog.
+
+        ``language=None`` lets Whisper detect the language per utterance instead
+        of forcing one: with a forced language, English speech comes back as
+        Russian words, which destroys the meaning of a mixed-language meeting.
         """
         if audio.size == 0:
-            return ""
+            return Transcript()
 
         if greedy:
             if not self._infer_lock.acquire(blocking=False):
-                return ""
+                return Transcript()
             try:
-                return self._run(audio, beam_size=1)
+                return self._run(audio, beam_size=1, language=language)
             finally:
                 self._infer_lock.release()
 
         with self._infer_lock:
-            return self._run(audio, beam_size=self.beam_size)
+            return self._run(audio, beam_size=self.beam_size, language=language)
 
-    def _run(self, audio: np.ndarray, *, beam_size: int) -> str:
+    def _run(self, audio: np.ndarray, *, beam_size: int, language: str | None) -> Transcript:
         model = self.ensure()
-        segments, _info = model.transcribe(
+        # A configured language wins: the operator asked for it explicitly.
+        target = self.language or language
+        segments, info = model.transcribe(
             audio,
-            language=self.language,
+            language=target,
             beam_size=beam_size,
             vad_filter=False,  # VAD already ran upstream
             condition_on_previous_text=False,
             without_timestamps=True,
+            no_speech_threshold=0.6,
+            log_prob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            initial_prompt=self.prompt,
         )
-        return " ".join(segment.text.strip() for segment in segments).strip()
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+        return Transcript(
+            text=text,
+            language=getattr(info, "language", None),
+            probability=getattr(info, "language_probability", None),
+        )
 
 
 _RUNNERS: dict[tuple[str, str, str], WhisperRunner] = {}
@@ -348,18 +397,19 @@ def get_runner(
     model_name: str = "large-v3-turbo",
     *,
     device: str = "auto",
-    language: str = "ru",
+    language: str | None = None,
+    prompt: str | None = None,
 ) -> WhisperRunner:
     """One runner per (model, device, language), shared by every session.
 
     Loading 1.6 GB of weights per meeting would make the second session in a row
     feel broken; the model is read-only after construction, so sharing is safe.
     """
-    key = (model_name, device, language)
+    key = (model_name, device, language, prompt or "")
     with _RUNNERS_LOCK:
         runner = _RUNNERS.get(key)
         if runner is None:
-            runner = WhisperRunner(model_name, device=device, language=language)
+            runner = WhisperRunner(model_name, device=device, language=language, prompt=prompt)
             _RUNNERS[key] = runner
         return runner
 
@@ -382,6 +432,27 @@ class ParticipantASR:
         self._next_partial_ms = 0
         self._last_partial = ""
         self._stream_ms = 0
+        #: Last confidently detected language. A one-word "да" is too short to
+        #: detect reliably, so short utterances reuse this instead of asking
+        #: Whisper to guess again and risk flipping the language mid-sentence.
+        self.language: str | None = None
+        self.detect_min_samples = int(SAMPLE_RATE * 1.5)
+
+    def _language_for(self, audio: np.ndarray) -> str | None:
+        """Which language to ask for: pinned, auto-detected, or last known."""
+        if self.runner.language:
+            return self.runner.language
+        if audio.size >= self.detect_min_samples:
+            return None  # long enough for Whisper to decide per utterance
+        return self.language
+
+    def _transcribe(self, audio: np.ndarray, *, greedy: bool = False) -> Transcript:
+        result = self.runner.transcribe(audio, greedy=greedy, language=self._language_for(audio))
+        # Only auto-detection updates the sticky language: a pinned one is the
+        # operator's decision and must survive whatever Whisper reports.
+        if not self.runner.language and result.language and audio.size >= self.detect_min_samples:
+            self.language = result.language
+        return result
 
     def push(self, pcm: bytes) -> list[ASREvent]:
         audio = pcm16_to_float(pcm)
@@ -391,24 +462,33 @@ class ParticipantASR:
         out: list[ASREvent] = []
         for event in self.detector.push(audio):
             if event.kind == "segment" and event.pcm is not None:
-                text = self.runner.transcribe(event.pcm)
-                if text:
-                    out.append(ASREvent("final", text=text, start_ms=event.start_ms, end_ms=event.end_ms))
+                result = self._transcribe(event.pcm)
+                if result.text:
+                    out.append(
+                        ASREvent(
+                            "final",
+                            text=result.text,
+                            start_ms=event.start_ms,
+                            end_ms=event.end_ms,
+                            language=result.language,
+                        )
+                    )
                     self._last_partial = ""
 
         self._stream_ms += int(audio.size * 1000 / SAMPLE_RATE)
         if self.detector.in_speech and self._stream_ms >= self._next_partial_ms:
             buffer = self.detector.buffered_audio()
             if buffer.size >= SAMPLE_RATE // 2:
-                text = self.runner.transcribe(buffer, greedy=True)
-                if text and text != self._last_partial:
-                    self._last_partial = text
+                result = self._transcribe(buffer, greedy=True)
+                if result.text and result.text != self._last_partial:
+                    self._last_partial = result.text
                     out.append(
                         ASREvent(
                             "partial",
-                            text=text,
+                            text=result.text,
                             start_ms=self.detector.buffer_start_ms,
                             end_ms=self._stream_ms,
+                            language=result.language,
                         )
                     )
                 self._next_partial_ms = self._stream_ms + self.partial_interval_ms
@@ -418,7 +498,15 @@ class ParticipantASR:
         out: list[ASREvent] = []
         for event in self.detector.flush():
             if event.kind == "segment" and event.pcm is not None:
-                text = self.runner.transcribe(event.pcm)
-                if text:
-                    out.append(ASREvent("final", text=text, start_ms=event.start_ms, end_ms=event.end_ms))
+                result = self._transcribe(event.pcm)
+                if result.text:
+                    out.append(
+                        ASREvent(
+                            "final",
+                            text=result.text,
+                            start_ms=event.start_ms,
+                            end_ms=event.end_ms,
+                            language=result.language,
+                        )
+                    )
         return out

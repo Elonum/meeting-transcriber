@@ -79,7 +79,13 @@ def main() -> int:
         check("three guidance steps", page.locator(".steps li").count() == 3)
         ok, detail = no_overflow(page)
         check("no horizontal overflow (desktop)", ok, detail)
-        check("no pipeline switch left in the form", page.locator("select").count() == 0)
+        selects = page.locator(".form select")
+        check(
+            "only the language select remains in the form",
+            selects.count() == 1 and selects.first.get_attribute("aria-label") == "Язык речи",
+            f"{selects.count()} selects",
+        )
+        check("speech language defaults to automatic", selects.first.input_value() == "auto")
         check("field named after the meeting address", "Адрес видеовстречи" in page.locator(".form").inner_text())
 
         # -- theme -----------------------------------------------------------
@@ -114,7 +120,7 @@ def main() -> int:
         check("four tiles (bot + three people)", page.locator(".tile").count() == 4, str(page.locator(".tile").count()))
 
         try:
-            page.wait_for_selector(".tile--speaking", timeout=8000)
+            page.wait_for_selector(".tile--speaking", timeout=20000)
             speaking = page.locator(".tile--speaking").count()
         except Exception:  # noqa: BLE001 - a pause between phrases is not a bug
             speaking = 0

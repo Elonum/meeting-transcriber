@@ -16,6 +16,7 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
   const [password, setPassword] = useState('')
   const [title, setTitle] = useState('')
   const [startAt, setStartAt] = useState('')
+  const [language, setLanguage] = useState<'auto' | 'ru' | 'en'>('auto')
   const [error, setError] = useState<string | null>(null)
 
   const link = useMemo(() => parseMeetingLink(url), [url])
@@ -45,11 +46,13 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
         password: link.hasPassword ? null : password.trim(),
         start_at: startAt ? new Date(startAt).toISOString() : null,
         pipeline: 'jazz',
+        language,
       })
       setUrl('')
       setPassword('')
       setTitle('')
       setStartAt('')
+      setLanguage('auto')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось подключиться')
     }
@@ -118,6 +121,18 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
               min={toLocalInputValue(Date.now())}
               onChange={(event) => setStartAt(event.target.value)}
             />
+          </label>
+          <label className="field">
+            <span>Язык речи <em>по умолчанию автоматически</em></span>
+            <select
+              aria-label="Язык речи"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as 'auto' | 'ru' | 'en')}
+            >
+              <option value="auto">Определять автоматически</option>
+              <option value="ru">Русский</option>
+              <option value="en">English</option>
+            </select>
           </label>
           <label className="field">
             <span>Название <em>для истории</em></span>

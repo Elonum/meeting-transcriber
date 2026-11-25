@@ -12,7 +12,7 @@ import os
 from typing import Any
 
 from . import protocol as p
-from .asr import ASREvent, ParticipantASR, get_runner
+from .asr import ASREvent, ParticipantASR, get_runner, prompt_from_env
 from .capture import BrowserAgent
 from .errors import describe_error
 from .faces import make_detector
@@ -60,7 +60,7 @@ class JazzPipeline:
         channel: str | None = "chrome",
         model: str = "large-v3-turbo",
         device: str = "auto",
-        language: str = "ru",
+        language: str | None = None,
         partial_interval_ms: int = 1200,
         agent: BrowserAgent | None = None,
         password: str | None = None,
@@ -82,7 +82,7 @@ class JazzPipeline:
         self.agent = agent or BrowserAgent(
             meeting_url, headless=headless, channel=channel, password=password
         )
-        self.runner = get_runner(model, device=device, language=language)
+        self.runner = get_runner(model, device=device, language=language, prompt=prompt_from_env())
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
         self._participant_state: dict[str, dict[str, Any]] = {}  # track_id -> session dict
@@ -432,6 +432,7 @@ class JazzPipeline:
                             "text": event.text,
                             "final": False,
                             "confidence": None,
+                            "language": event.language,
                         },
                     )
                 )
@@ -456,6 +457,7 @@ class JazzPipeline:
                             "text": event.text,
                             "final": True,
                             "confidence": None,
+                            "language": event.language,
                         },
                     )
                 )

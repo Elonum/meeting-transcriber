@@ -142,6 +142,7 @@ def to_json(
                 "end_ms": seg["end_ms"],
                 "text": seg["text"],
                 "confidence": seg.get("confidence"),
+                "language": seg.get("language"),
             }
             for seg in _ordered(segments)
         ],

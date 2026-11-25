@@ -54,6 +54,8 @@ export interface Segment {
   start_ms: number
   end_ms: number
   text: string
+  /** Language Whisper detected for this phrase; shown when it is not Russian. */
+  language?: string | null
   final: boolean
   confidence: number | null
   revision?: number
@@ -83,6 +85,7 @@ export interface CreateSessionPayload {
   duration_min?: number | null
   start_at?: string | null
   pipeline?: 'mock' | 'jazz'
+  language?: 'auto' | 'ru' | 'en'
   password?: string | null
   speed?: number
   headless?: boolean

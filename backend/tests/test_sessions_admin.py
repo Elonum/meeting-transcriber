@@ -165,3 +165,19 @@ def test_zip_without_audio_still_works(client: TestClient) -> None:
 def test_unknown_export_format(client: TestClient) -> None:
     session_id = _finished(client)
     assert client.get(f"/api/sessions/{session_id}/export/docx").status_code == 400
+
+
+def test_history_is_limited_but_reports_the_real_total(client: TestClient) -> None:
+    for _ in range(3):
+        _finished(client)
+
+    body = client.get("/api/sessions", params={"limit": 2}).json()
+
+    assert len(body["sessions"]) == 2
+    assert body["total"] >= 3, "the interface needs the true number of matches"
+    assert body["limit"] == 2
+
+
+def test_history_limit_is_clamped(client: TestClient) -> None:
+    assert client.get("/api/sessions", params={"limit": 0}).json()["limit"] == 1
+    assert client.get("/api/sessions", params={"limit": 5000}).json()["limit"] == 200
