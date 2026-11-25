@@ -34,6 +34,14 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+# Playwright's driver cannot use the system temp on this machine: use a local one.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "tools"))
+from _env import ensure_local_temp as _ensure_local_temp  # noqa: E402
+
+_ensure_local_temp()
+
 HOOK = r"""
 (() => {
   const state = {
@@ -179,46 +187,160 @@ NAME_INPUTS = [
     'input[type="text"]',
 ]
 
+PASSWORD_INPUTS = [
+    'input[type="password"]',
+    'input[placeholder*="ароль" i]',
+    'input[placeholder*="password" i]',
+    'input[name="password"]',
+]
+
 JOIN_BUTTONS = [
+    'button:has-text("Подключиться")',
     'button:has-text("Присоединиться")',
+    'button:has-text("Войти в комнату")',
     'button:has-text("Войти")',
     'button:has-text("Join")',
     'button:has-text("Enter")',
-    'button:has-text("Подключиться")',
 ]
+
+PERMISSION_BUTTONS = [
+    'button:has-text("Разрешить")',
+    'button:has-text("Позволить")',
+    'button:has-text("Allow")',
+]
+
+#: The web client runs its own browser check and, for anything it does not
+#: recognise, shows "Ваш браузер не поддерживается" with only an "open the app"
+#: button. Two things make it pass: no ``--enable-automation`` switch (Playwright
+#: adds it by default) and its own sessionStorage bypass, which is what its
+#: "continue anyway" button writes.
+PRELUDE_JS = """
+try { delete navigator.webdriver; } catch (e) {}
+try { Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); } catch (e) {}
+try { sessionStorage.setItem('s2b.browserChecker.skipChecking', 'true'); } catch (e) {}
+"""
+
+LAUNCH_ARGS = [
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    "--autoplay-policy=no-user-gesture-required",
+    "--disable-blink-features=AutomationControlled",
+]
+
+#: SaluteJazz sends invites with an encrypted ``?psw=`` parameter. That form is a
+#: deep link for the desktop app: the web client logs "browser not supported" and
+#: fires ``jazz://join``. The same room without ``?psw=`` opens the web lobby with
+#: a name and password field, which is what an unattended agent needs.
+DEEP_LINK_PARAMS = ("psw",)
+
+
+def strip_deep_link_params(url: str) -> tuple[str, list[str]]:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    dropped = [key for key, _value in query if key in DEEP_LINK_PARAMS]
+    if not dropped:
+        return url, []
+    kept = [(key, value) for key, value in query if key not in DEEP_LINK_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(kept))), dropped
 
 
 def log(message: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 
-def try_join(page) -> list[str]:
-    """Best-effort guest join. Returns a log of what was attempted."""
+def try_join(
+    page,
+    *,
+    name: str = "Ассистент (транскрибация)",
+    password: str | None = None,
+    timeout_ms: int = 30_000,
+) -> list[str]:
+    """Fill the lobby and press join, retrying until the SPA has rendered.
+
+    The client is a React SPA that fetches feature flags before painting the
+    lobby, so the controls appear a few seconds late — a single look is not
+    enough, which is exactly how the first attempt failed.
+    """
     actions: list[str] = []
+    deadline = time.time() + timeout_ms / 1000
+    filled_name = filled_password = clicked = False
 
-    for selector in NAME_INPUTS:
-        locator = page.locator(selector).first
-        try:
-            if locator.count() and locator.is_visible():
-                locator.fill("Ассистент (транскрибация)")
-                actions.append(f"filled {selector}")
-                break
-        except Exception:  # noqa: BLE001 - heuristics only
-            continue
+    while time.time() < deadline and not clicked:
+        for selector in PERMISSION_BUTTONS:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() and locator.is_visible():
+                    locator.click(timeout=2000)
+                    actions.append(f"dismissed media dialog via {selector}")
+                    break
+            except Exception:  # noqa: BLE001 - heuristics only
+                continue
 
-    for selector in JOIN_BUTTONS:
-        locator = page.locator(selector).first
-        try:
-            if locator.count() and locator.is_visible():
-                locator.click()
-                actions.append(f"clicked {selector}")
-                break
-        except Exception:  # noqa: BLE001
-            continue
+        if not filled_name:
+            for selector in NAME_INPUTS:
+                locator = page.locator(selector).first
+                try:
+                    if locator.count() and locator.is_visible() and locator.is_editable():
+                        locator.fill(name, timeout=2000)
+                        actions.append(f"filled name via {selector}")
+                        filled_name = True
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
 
-    if not actions:
-        actions.append("no join controls found — join manually")
+        if password and not filled_password:
+            for selector in PASSWORD_INPUTS:
+                locator = page.locator(selector).first
+                try:
+                    if locator.count() and locator.is_visible():
+                        locator.fill(password, timeout=2000)
+                        actions.append(f"filled password via {selector}")
+                        filled_password = True
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+
+        if filled_name and (filled_password or not password):
+            for selector in JOIN_BUTTONS:
+                locator = page.locator(selector).first
+                try:
+                    if locator.count() and locator.is_visible() and locator.is_enabled():
+                        locator.click(timeout=3000)
+                        actions.append(f"clicked {selector}")
+                        clicked = True
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+
+        if not clicked:
+            page.wait_for_timeout(700)
+
+    if not clicked:
+        actions.append("join button never became available")
     return actions
+
+
+def describe_page(page) -> dict:
+    """What is actually on screen — makes a failed join self-explanatory."""
+    try:
+        return page.evaluate(
+            """
+            (() => ({
+              url: location.href,
+              inputs: Array.from(document.querySelectorAll('input')).map((input) => ({
+                type: input.type, placeholder: input.placeholder || '', visible: !!input.offsetParent,
+              })),
+              buttons: Array.from(document.querySelectorAll('button'))
+                .filter((button) => button.offsetParent)
+                .map((button) => (button.innerText || '').trim().slice(0, 40)),
+              bodyStart: (document.body.innerText || '').slice(0, 400),
+            }))()
+            """
+        )
+    except Exception as error:  # noqa: BLE001
+        return {"error": str(error)}
 
 
 def main() -> int:
@@ -227,29 +349,46 @@ def main() -> int:
     parser.add_argument("--seconds", type=int, default=45, help="observation window")
     parser.add_argument("--headed", action="store_true", help="show the browser (recommended first run)")
     parser.add_argument("--out", default=None, help="output directory")
+    parser.add_argument("--password", default=None, help="meeting password (SaluteJazz: 'Пароль видеовстречи')")
+    parser.add_argument("--name", default="Ассистент (транскрибация)", help="display name the agent joins with")
+    parser.add_argument(
+        "--channel",
+        default="chrome",
+        help="chrome | msedge | chromium — SaluteJazz's gate is browser dependent",
+    )
+    parser.add_argument(
+        "--no-fake-media",
+        action="store_true",
+        help="do not install synthetic camera/mic (closest to a real user)",
+    )
     args = parser.parse_args()
 
+    meeting_url, dropped = strip_deep_link_params(args.url)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = Path(args.out) if args.out else Path(__file__).resolve().parent / "out" / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
     report: dict = {"url": args.url, "started": stamp, "chunks": [], "actions": []}
+    if dropped:
+        # Invite links carry ?psw=, which makes the web client hand off to the
+        # desktop app instead of showing the lobby. The same room works without it.
+        report["dropped_params"] = dropped
+        report["url_used"] = meeting_url
+        log(f"dropped {dropped} from the URL: the web lobby lives at {meeting_url}")
 
     with sync_playwright() as playwright:
         browser = None
-        for channel in ("msedge", "chrome", None):
+        launch_args = [arg for arg in LAUNCH_ARGS if not (args.no_fake_media and "fake" in arg)]
+        channels = [args.channel] + ([] if args.channel == "chromium" else ["chromium"])
+        for channel in channels:
             try:
                 browser = playwright.chromium.launch(
-                    channel=channel,
+                    channel=None if channel == "chromium" else channel,
                     headless=not args.headed,
-                    args=[
-                        "--use-fake-ui-for-media-stream",
-                        "--use-fake-device-for-media-stream",
-                        "--autoplay-policy=no-user-gesture-required",
-                        "--disable-blink-features=AutomationControlled",
-                    ],
+                    args=launch_args,
+                    ignore_default_args=["--enable-automation"],
                 )
-                report["browser"] = channel or "chromium"
+                report["browser"] = channel
                 break
             except Exception as error:  # noqa: BLE001
                 report.setdefault("launch_errors", []).append(str(error))
@@ -269,15 +408,19 @@ def main() -> int:
             "__probeWrite",
             lambda source, payload: _save_chunk(out_dir, source, payload, report),
         )
+        page.add_init_script(PRELUDE_JS)
         page.add_init_script(HOOK)
 
-        log(f"opening {args.url}")
-        page.goto(args.url, wait_until="domcontentloaded", timeout=90_000)
+        log(f"opening {meeting_url}")
+        page.goto(meeting_url, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(4000)
 
         page.screenshot(path=str(out_dir / "01-landing.png"))
         report["title"] = page.title()
-        report["actions"] = try_join(page)
+        report["actions"] = try_join(page, name=args.name, password=args.password)
+        log(f"join: {report['actions']}")
+        report["after_join"] = describe_page(page)
+        page.screenshot(path=str(out_dir / "02-after-join.png"))
 
         deadline = time.time() + args.seconds
         shot = 0

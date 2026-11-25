@@ -16,6 +16,14 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+# Playwright's driver cannot use the system temp on this machine: use a local one.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _env import ensure_local_temp as _ensure_local_temp  # noqa: E402
+
+_ensure_local_temp()
+
 OUT = Path(__file__).resolve().parents[1] / ".artifacts"
 
 # Sites that gate on "supported browser" usually check navigator.webdriver and the
@@ -49,6 +57,11 @@ def main() -> int:
         help="only remove navigator.webdriver, keep the real UA and no launch flags",
     )
     parser.add_argument("--channel", default=None, help="msedge | chrome | chromium")
+    parser.add_argument(
+        "--skip-checker",
+        action="store_true",
+        help="preset the product's own sessionStorage flag that bypasses its browser gate",
+    )
     args = parser.parse_args()
 
     OUT.mkdir(exist_ok=True)
@@ -84,9 +97,26 @@ def main() -> int:
         context = browser.new_context(**context_kwargs)
         if not args.vanilla or args.hide_webdriver:
             context.add_init_script(STEALTH_JS)
+        if args.skip_checker:
+            # SaluteJazz keeps this flag in sessionStorage and reads it at boot;
+            # it is what their own "continue anyway" button writes.
+            context.add_init_script(
+                "try{sessionStorage.setItem('s2b.browserChecker.skipChecking','true')}catch(e){}"
+            )
         page = context.new_page()
         errors: list[str] = []
+        net_failed: list[str] = []
+        net_bad: list[str] = []
+        console: list[str] = []
         page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("requestfailed", lambda req: net_failed.append(f"{req.method} {req.url[:140]} :: {req.failure}"))
+        page.on(
+            "response",
+            lambda resp: net_bad.append(f"{resp.status} {resp.url[:140]}")
+            if resp.status >= 400
+            else None,
+        )
+        page.on("console", lambda message: console.append(f"{message.type}: {message.text[:200]}"))
 
         try:
             response = page.goto(args.url, wait_until="domcontentloaded", timeout=60_000)
@@ -117,7 +147,10 @@ def main() -> int:
               };
             })()
         """)
-        info["errors"] = errors[:5]
+        info["errors"] = errors[:10]
+        info["network_failed"] = net_failed[:15]
+        info["network_bad"] = net_bad[:15]
+        info["console"] = console[:20]
         print(json.dumps(info, ensure_ascii=False, indent=2))
         # The console mangles Cyrillic on Windows; the file keeps it intact.
         (OUT / "peek.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
