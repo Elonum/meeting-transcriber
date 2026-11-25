@@ -20,10 +20,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import logging.handlers
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote, urlparse
@@ -43,11 +44,39 @@ from .recording import read_recordings
 from .session import SessionManager
 
 log = logging.getLogger("transcribe")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("TRANSCRIBE_DATA_DIR", ROOT / "data"))
 STATIC_DIR = Path(os.environ.get("TRANSCRIBE_STATIC_DIR", ROOT / "frontend" / "dist"))
+LOG_FILE = DATA_DIR / "app.log"
+
+
+def configure_logging() -> None:
+    """Console for the terminal, a rotating file for when the terminal is gone.
+
+    The UI cannot show a Python traceback, and asking a user to reproduce a crash
+    so a log can be read is a bad trade. Everything the service logs lands in
+    ``data/app.log`` as well, and ``GET /api/logs`` returns the tail.
+    """
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+            )
+        )
+    except OSError:  # noqa: PERF203 - a read-only data dir must not stop the API
+        pass
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        handlers=handlers,
+        force=True,
+    )
+
+
+configure_logging()
 
 manager = SessionManager(DATA_DIR)
 
@@ -173,7 +202,22 @@ async def health() -> dict:
         "sessions": len(manager.sessions),
         "data_dir": str(DATA_DIR),
         "static_ready": (STATIC_DIR / "index.html").is_file(),
+        "log_file": str(LOG_FILE),
     }
+
+
+@app.get("/api/logs")
+async def logs(lines: int = 200) -> Response:
+    """Tail of the service log, so "где смотреть логи" has an answer in the UI."""
+    limit = max(1, min(lines, 5000))
+    if not LOG_FILE.is_file():
+        return Response(content="", media_type="text/plain; charset=utf-8")
+    with LOG_FILE.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - 200_000))
+        tail = handle.read().decode("utf-8", "replace")
+    return Response(content="\n".join(tail.splitlines()[-limit:]), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/api/sessions")
@@ -367,7 +411,7 @@ async def events(socket: WebSocket, session_id: str) -> None:
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=20.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await socket.send_text(json.dumps({"type": "ping", "at_ms": 0}))
                 continue
             await socket.send_text(json.dumps(event, ensure_ascii=False))

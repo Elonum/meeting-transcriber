@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from app.asr import ParticipantASR, SpeechDetector, float_to_pcm16, pcm16_to_float
 
 RATE = 16_000

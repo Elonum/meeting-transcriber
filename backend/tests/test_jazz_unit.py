@@ -12,7 +12,6 @@ import asyncio
 from typing import Any
 
 import pytest
-
 from app import protocol as p
 from app.asr import ASREvent
 from app.capture import ParticipantUpdate
@@ -39,7 +38,7 @@ class DeadAgent:
     async def chunks(self):
         if False:  # pragma: no cover - makes this an async generator, like the real one
             yield None
-        while True:
+        while True:  # noqa: ASYNC110 - a fake stream that never produces anything
             await asyncio.sleep(0.05)
 
     async def close(self) -> None:

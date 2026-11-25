@@ -11,7 +11,6 @@ import time
 import zipfile
 
 import pytest
-
 from app.main import DATA_DIR, app  # noqa: F401 - importing sets the data dir
 from app.recording import TrackRecorder
 from fastapi.testclient import TestClient

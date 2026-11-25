@@ -21,9 +21,10 @@ _TMP_ROOT = Path(__file__).resolve().parents[2] / ".tmp" / "tests"
 _TMP_ROOT.mkdir(parents=True, exist_ok=True)
 os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-test-", dir=_TMP_ROOT)
 
-from fastapi.testclient import TestClient  # noqa: E402
+from datetime import UTC  # noqa: E402 - the env above must be set first
 
 from app.main import app  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 MEETING = "https://jazz.sber.ru/meeting/abc-defg-hij"
 
@@ -157,9 +158,9 @@ def test_unknown_session_is_404(client: TestClient) -> None:
 
 def test_scheduled_session_waits_then_runs(client: TestClient) -> None:
     """The brief asks for "ссылка + время": the agent must wait for the clock."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    start_at = (datetime.now(timezone.utc) + timedelta(seconds=3)).isoformat()
+    start_at = (datetime.now(UTC) + timedelta(seconds=3)).isoformat()
     created = client.post(
         "/api/sessions",
         json={"meeting_url": MEETING, "start_at": start_at, "speed": 30},
@@ -188,18 +189,18 @@ def test_scheduled_session_waits_then_runs(client: TestClient) -> None:
 
 
 def test_past_start_at_is_rejected(client: TestClient) -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    start_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    start_at = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     response = client.post("/api/sessions", json={"meeting_url": MEETING, "start_at": start_at})
     assert response.status_code == 422
     assert "прошло" in response.text
 
 
 def test_scheduled_session_can_be_cancelled(client: TestClient) -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    start_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    start_at = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
     created = client.post("/api/sessions", json={"meeting_url": MEETING, "start_at": start_at})
     session_id = created.json()["id"]
     time.sleep(0.3)

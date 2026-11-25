@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
-
-from playwright.sync_api import sync_playwright
 
 # Playwright's driver cannot use the system temp on this machine: use a local one.
 import sys as _sys
+from pathlib import Path
 from pathlib import Path as _Path
+
+from playwright.sync_api import sync_playwright
+
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 from _env import ensure_local_temp as _ensure_local_temp  # noqa: E402
 

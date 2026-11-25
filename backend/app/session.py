@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import protocol as p
+from .errors import describe_error
 
 log = logging.getLogger(__name__)
 
@@ -216,10 +217,8 @@ class Session:
             except asyncio.QueueFull:
                 # A slow browser must not stall the pipeline: drop the oldest
                 # event, the UI re-syncs from the next snapshot.
-                try:
+                with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
                 queue.put_nowait(event)
 
     # -- lifecycle -----------------------------------------------------------
@@ -257,7 +256,7 @@ class Session:
             raise
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI on purpose
             log.exception("session %s failed", self.id)
-            await self.emit(p.ev_session(p.FAILED, self._at(), error=str(exc)))
+            await self.emit(p.ev_session(p.FAILED, self._at(), error=describe_error(exc)))
 
     async def stop(self) -> None:
         if self._task is None or self._task.done():

@@ -6,8 +6,9 @@ revisions never leak into a downloaded file.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 FORMATS = ("srt", "vtt", "txt", "md", "json")
 
@@ -71,7 +72,7 @@ def local_start(session: dict[str, Any]) -> datetime:
     is a small but constant annoyance; ``astimezone()`` keeps the offset visible
     for anyone who opens the file elsewhere.
     """
-    moment = datetime.fromtimestamp(session["started_at_ms"] / 1000, tz=timezone.utc)
+    moment = datetime.fromtimestamp(session["started_at_ms"] / 1000, tz=UTC)
     return moment.astimezone()
 
 

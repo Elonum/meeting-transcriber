@@ -33,7 +33,7 @@ async def run(seconds: int) -> int:
     if STATE.exists():
         STATE.unlink()
 
-    host = subprocess.Popen(
+    host = subprocess.Popen(  # noqa: ASYNC220 - a debug tool, the blocking call is fine
         [sys.executable, str(ROOT / "tools" / "host_room.py"), "--minutes", "3"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -70,7 +70,7 @@ async def run(seconds: int) -> int:
             try:
                 await asyncio.wait_for(agent._queue.get(), timeout=2)
                 chunks += 1
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
         print("chunks:", chunks)
         await agent.screenshot(str(ROOT / ".artifacts" / "agent-debug.png"))

@@ -60,7 +60,9 @@ class TrackRecorder:
         self._closed = False
         self._lock = threading.Lock()
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._wave = wave.open(str(path), "wb")
+        # The handle stays open for the whole track on purpose: a context
+        # manager would reopen the file for every audio chunk.
+        self._wave = wave.open(str(path), "wb")  # noqa: SIM115
         self._wave.setnchannels(CHANNELS)
         self._wave.setsampwidth(SAMPLE_WIDTH)
         self._wave.setframerate(SAMPLE_RATE)

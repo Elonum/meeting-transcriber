@@ -4,3 +4,5 @@ httpx>=0.27
 # Fast file watching for `uvicorn --reload`; without it uvicorn falls back to
 # polling the whole tree, which is noticeably slower.
 watchfiles>=0.21
+# Static analysis; CI runs it on every push.
+ruff>=0.6

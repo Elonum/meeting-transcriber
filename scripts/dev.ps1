@@ -3,14 +3,21 @@
 #   .\scripts\dev.ps1 -Build          rebuild the frontend, then start the API
 #   .\scripts\dev.ps1 -Web            also start Vite with hot reload (new window)
 #   .\scripts\dev.ps1 -Port 8010      another port
-#   .\scripts\dev.ps1 -NoReload       do not restart on Python changes
+#   .\scripts\dev.ps1 -Reload         restart on Python changes (supervised child)
+#
+# NOTE: uvicorn --reload is never used here. On Windows it installs the selector
+# event loop, which cannot spawn subprocesses, so Playwright fails on join with
+# NotImplementedError. -Reload restarts a child process instead.
 #
 # Stop it with Ctrl+C. Nothing starts by itself after a reboot: the API is an
-# ordinary process, so it has to be started again (see README, "Быстрый старт").
+# ordinary process, so it has to be started again (see README).
+#
+# Keep this file ASCII-only: Windows PowerShell 5.1 reads scripts without a BOM
+# as ANSI and mangles (then fails to parse) non-ASCII text.
 param(
     [switch]$Build,
     [switch]$Web,
-    [switch]$NoReload,
+    [switch]$Reload,
     [int]$Port = 8000
 )
 
@@ -41,17 +48,6 @@ if ($Web) {
     Write-Host "Vite: http://127.0.0.1:5173 (hot reload)" -ForegroundColor Cyan
 }
 
-$reload = @()
-if (-not $NoReload) {
-    & $python -c "import watchfiles" 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        $reload = @('--reload')
-    } else {
-        Write-Host "watchfiles is not installed: starting without auto-reload." -ForegroundColor Yellow
-        Write-Host "  .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt" -ForegroundColor DarkGray
-    }
-}
-
 $base = "http://127.0.0.1:$Port"
 if (-not (Test-Path (Join-Path $root 'frontend\dist\index.html'))) {
     Write-Host "Frontend is not built yet: the API will serve a placeholder page." -ForegroundColor Yellow
@@ -61,12 +57,18 @@ if (-not (Test-Path (Join-Path $root 'frontend\dist\index.html'))) {
 Write-Host ""
 Write-Host "  UI:   $base" -ForegroundColor Cyan
 Write-Host "  Docs: $base/docs" -ForegroundColor DarkGray
+Write-Host "  Logs: $base/api/logs  (file: data\app.log)" -ForegroundColor DarkGray
 Write-Host "  Stop: Ctrl+C" -ForegroundColor DarkGray
 Write-Host ""
 
+if ($Reload) {
+    & $python (Join-Path $root 'scripts\dev_server.py') --port $Port
+    exit $LASTEXITCODE
+}
+
 Push-Location (Join-Path $root 'backend')
 try {
-    & $python -m uvicorn app.main:app --host 127.0.0.1 --port $Port @reload
+    & $python -m uvicorn app.main:app --host 127.0.0.1 --port $Port --log-level info
 } finally {
     Pop-Location
 }

@@ -170,17 +170,7 @@ def wait_and_click(page, needle: str, *, timeout: int = 18) -> str | None:
         if result:
             return result
         page.wait_for_timeout(800)
-    return None
-    done = []
-    for label in labels:
-        locator = page.locator(f'button:has-text("{label}")').first
-        try:
-            if locator.count() and locator.is_visible():
-                locator.click(timeout=2000)
-                done.append(label)
-        except Exception:  # noqa: BLE001
-            continue
-    return done
+        return None
 
 
 def main() -> int:

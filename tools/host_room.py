@@ -14,6 +14,7 @@ the room exists, so another process can pick it up.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import time
@@ -63,10 +64,8 @@ def click_text(page, needle: str, *, timeout: int = 18) -> str | None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         for label in OVERLAYS:
-            try:
+            with contextlib.suppress(Exception):
                 page.evaluate(CLICK_BY_TEXT, label)
-            except Exception:  # noqa: BLE001
-                pass
         try:
             result = page.evaluate(CLICK_BY_TEXT, needle)
         except Exception:  # noqa: BLE001

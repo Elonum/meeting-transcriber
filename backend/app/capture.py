@@ -41,6 +41,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .errors import AgentUnavailableError, describe_error
+from .security import redact_url
+
 log = logging.getLogger(__name__)
 
 #: Enough of a browser to be indistinguishable from a human, plus synthetic media
@@ -502,7 +505,22 @@ class BrowserAgent:
         from playwright.async_api import async_playwright
 
         self._loop = asyncio.get_running_loop()
-        self._playwright = await async_playwright().start()
+        try:
+            self._playwright = await async_playwright().start()
+        except NotImplementedError as error:
+            # Playwright spawns its driver as a subprocess. uvicorn --reload on
+            # Windows installs a selector loop, which cannot do that, and the raw
+            # error text is empty — that produced a bare "Ошибка: ." in the UI.
+            raise AgentUnavailableError(
+                "браузерный агент не может запуститься: сервер работает на SelectorEventLoop, "
+                "а он в Windows не умеет запускать подпроцессы. Так бывает при uvicorn --reload. "
+                "Запустите сервер без него (scripts\\dev.cmd) и повторите."
+            ) from error
+        except Exception as error:  # noqa: BLE001 - the driver may be missing entirely
+            raise AgentUnavailableError(
+                f"браузерный агент не может запуститься: {describe_error(error)}. Проверьте установку: "
+                ".venv\\Scripts\\python.exe -m playwright install chrome"
+            ) from error
 
         launch_flags = launch_args()
         channels = [self.channel] if self.channel else [None]
@@ -542,7 +560,7 @@ class BrowserAgent:
         await self.page.expose_binding("__trackEnded", self._on_track_ended)
         await self.page.add_init_script(CAPTURE_JS)
 
-        log.info("agent: joining %s", self.url)
+        log.info("agent: joining %s", redact_url(self.url))
         await self.page.goto(self.url, wait_until="domcontentloaded", timeout=self.join_timeout_ms)
         await self._join()
         # People join and leave after us; the room's participant list is the only
@@ -551,7 +569,7 @@ class BrowserAgent:
 
         try:
             await asyncio.wait_for(self.track_events.get(), timeout=20.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.notes.append("no tracks appeared within 20 s")
         return next(iter(self._tracks.values()), None)
 
@@ -764,16 +782,12 @@ class BrowserAgent:
         except Exception:  # noqa: BLE001
             pass
         for resource in (self._context, self._browser):
-            try:
+            with contextlib.suppress(Exception):
                 if resource is not None:
                     await resource.close()
-            except Exception:  # noqa: BLE001
-                pass
         if self._playwright is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._playwright.stop()
-            except Exception:  # noqa: BLE001
-                pass
 
     def _on_console(self, message: Any) -> None:
         """Keep join diagnostics, drop the warnings every browser prints."""
@@ -848,10 +862,8 @@ class BrowserAgent:
                 pass
 
     def _safe_put(self, queue: asyncio.Queue, item: Any) -> None:
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             queue.put_nowait(item)
-        except asyncio.QueueFull:
-            pass
 
     # -- consumption ---------------------------------------------------------
 

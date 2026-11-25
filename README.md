@@ -23,8 +23,8 @@
 | **Запись**: WAV по каждому участнику + архив «всё в ZIP» | |
 | **История**: серверный поиск по репликам, удаление встречи с файлами | |
 | **Интерфейс**: светлая/тёмная тема, адаптив до 420 px | |
-| Тесты: 85 юнит/API + 2 сквозных «браузер → PCM → текст» | |
-| **Приёмка** одной командой: `tools/acceptance.py` — 26/26, UI — 36/36 | |
+| Тесты: 99 юнит/API + 2 сквозных «браузер → PCM → текст» | |
+| **Приёмка** одной командой: `tools/acceptance.py` — 26/26, UI — 39/39 | |
 
 Сценарий показа на собеседовании и ответы на неудобные вопросы — в [docs/DEMO.md](docs/DEMO.md).
 
@@ -98,30 +98,51 @@ cd ..
 .\scripts\dev.cmd -Build       # пересобрать фронтенд и запустить
 .\scripts\dev.cmd -Web         # плюс Vite с hot reload (http://127.0.0.1:5173)
 .\scripts\dev.cmd -Port 8010   # другой порт
-.\scripts\dev.cmd -NoReload    # без перезапуска при правках Python
+.\scripts\dev.cmd -Reload      # перезапуск при правках Python (дочерний процесс)
 ```
 
 Ctrl+C останавливает сервер. Порт занят чужой копией — `Get-Process python | Stop-Process` или
 `netstat -ano | findstr :8000`.
 
+> **Почему не `uvicorn --reload`.** На Windows uvicorn с `--reload` ставит `SelectorEventLoop`,
+> который не умеет запускать подпроцессы, а Playwright запускает свой драйвер именно так. Итог —
+> `NotImplementedError` при подключении к встрече и «встреча завершена» в интерфейсе.
+> Поэтому `-Reload` перезапускает дочерний процесс без этого флага: правки подхватываются,
+> браузерный агент работает.
+
 > **Важно про фронтенд.** Без `-Web` сервер отдаёт **последнюю собранную** версию из
 > `frontend/dist`. Если правили React и не пересобрали — в браузере будет старая страница.
 > Лечится `-Build` (или `-Web` для hot reload).
+
+### Где смотреть логи
+
+| Что | Где |
+|---|---|
+| Всё, что пишет сервис (с трассировками) | консоль запуска — в PyCharm это окно **Run** |
+| То же в файле, с ротацией (5 МБ × 3) | `data/app.log` |
+| Последние строки без доступа к файлу | <http://127.0.0.1:8000/api/logs?lines=300> |
+| События одной встречи (JSONL) | `data/<id>/events.jsonl` или `/api/sessions/<id>/log` |
+| Что было на экране при сбое входа | `data/<id>/agent-join-failed.png` |
+
+Ошибка сессии теперь всегда содержит текст: пустые исключения вроде `NotImplementedError`
+превращаются в `NotImplementedError (исключение без описания)`, а сбой запуска браузера —
+в объяснение с подсказкой, что делать.
 
 ### Запуск из PyCharm
 
 1. **Interpreter:** Settings → Project → Python Interpreter → Add → Existing → `.venv\Scripts\python.exe`.
 2. **Run configuration** (Run → Edit Configurations → `+` → Python):
    - *Module name* (не Script path): `uvicorn`
-   - *Parameters*: `app.main:app --host 127.0.0.1 --port 8000 --reload`
+   - *Parameters*: `app.main:app --host 127.0.0.1 --port 8000` — **без `--reload`**, иначе см. выше
    - *Working directory*: `<репозиторий>\backend`
    - *Environment variables*: `PYTHONUNBUFFERED=1`, при желании `HF_HOME=<репозиторий>\.models`
-3. В репозитории уже лежит готовая конфигурация `.run/api (uvicorn --reload).run.xml` —
-   PyCharm подхватывает её автоматически. Если он подсветил поле Module, выберите модуль проекта
-   вручную: имя модуля совпадает с именем папки проекта.
+3. Готовая конфигурация лежит в `.run/api (uvicorn).run.xml` — PyCharm подхватывает её сам.
+   Если он подсветил поле Module, выберите модуль проекта вручную.
+4. Отладка: та же конфигурация через **Debug** (кнопка с жучком). Точки останова в `jazz.py`,
+   `capture.py`, `asr.py` работают; стек и локальные переменные видны прямо в IDE.
 
-PyCharm Professional умеет то же самое через готовый шаблон **FastAPI**: достаточно указать
-`backend/app/main.py`, остальное он подставит сам. В Community используйте конфигурацию выше.
+PyCharm Professional умеет то же через шаблон **FastAPI**: укажите `backend/app/main.py`,
+остальное он подставит сам. В Community используйте конфигурацию выше.
 
 Для разработки фронтенда удобнее Vite с проксированием:
 
@@ -442,7 +463,7 @@ cd backend; ..\.venv\Scripts\python.exe -m pytest tests -q
 # VAD и сегментация: синтетическое аудио, без модели и браузера
 cd backend; ..\.venv\Scripts\python.exe -m pytest tests\test_asr_detector.py -q
 
-# Участники и запись: имена, выходы, тишина в микрофоне, WAV, поиск, ZIP (85 тестов всего)
+# Участники и запись: имена, выходы, тишина в микрофоне, WAV, поиск, ZIP (99 тестов всего)
 cd backend; ..\.venv\Scripts\python.exe -m pytest tests\test_capture_participants.py -q
 
 # Сквозной тест: браузер → дорожки → PCM → VAD → Whisper → протокол.
@@ -453,7 +474,7 @@ cd backend; ..\.venv\Scripts\python.exe -m pytest tests\test_capture_e2e.py -q
 # Дым против живого сервера
 .\.venv\Scripts\python.exe tools\smoke.py http://127.0.0.1:8000 8
 
-# Верстка и поведение: 36 проверок — темы, ширины 1024/760/420, поиск истории, удаление
+# Верстка и поведение: 39 проверок — темы, ширины 1024/760/420, типографика, поиск, удаление
 .\.venv\Scripts\python.exe tools\ui_check.py http://127.0.0.1:8000
 
 # Скриншоты для README и разбора полёта (нужен установленный Edge/Chrome)
@@ -589,8 +610,9 @@ docker compose build --build-arg INSTALL_BROWSER=1   # + браузер для �
 
 MIT — см. [LICENSE](LICENSE).
 
-`.github/workflows/ci.yml` на каждый push и pull request прогоняет тесты бэкенда (Python 3.12) и
-сборку фронтенда (Node 22). Тесты лиц пропускаются без файла модели, а сквозной тест с браузером
+`.github/workflows/ci.yml` на каждый push и pull request прогоняет тесты бэкенда (Python 3.12),
+статический анализ (`ruff check backend tools scripts`) и сборку фронтенда (Node 22).
+Тесты лиц пропускаются без файла модели, а сквозной тест с браузером
 включается только переменной `TRANSCRIBE_E2E=1` — поэтому CI не требует ни GPU, ни Chromium.
 
 Формат сообщений коммитов, типы и области описаны в [CONTRIBUTING.md](CONTRIBUTING.md); там же —

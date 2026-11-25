@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -149,6 +148,30 @@ def main() -> int:
         check("menu has a ZIP bundle", any(h and h.endswith("/export/zip") for h in hrefs), str(hrefs[:2]))
         check("menu links point at exports", all(h and "/export/" in h for h in hrefs[:6]), str(hrefs[:2]))
         page.keyboard.press("Escape")
+
+        # -- typography: the UI must stay readable ---------------------------
+        sizes = page.evaluate(
+            """
+            () => {
+              const rows = [];
+              for (const el of document.querySelectorAll('body *')) {
+                const style = getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') continue;
+                if (el.children.length) continue;
+                const text = (el.textContent || '').trim();
+                if (!text) continue;
+                rows.push({ label: (el.className || el.tagName).toString().slice(0, 40), size: parseFloat(style.fontSize) });
+              }
+              return rows;
+            }
+            """
+        )
+        smallest = min(sizes, key=lambda row: row["size"]) if sizes else {"label": "-", "size": 0}
+        body_size = page.evaluate("parseFloat(getComputedStyle(document.querySelector('.line__text')).fontSize)")
+        tile_size = page.evaluate("parseFloat(getComputedStyle(document.querySelector('.tile__name')).fontSize)")
+        check("transcript text is 15 px or larger", body_size >= 15, f"{body_size} px")
+        check("participant names are 13.5 px or larger", tile_size >= 13.5, f"{tile_size} px")
+        check("no visible text below 11 px", smallest["size"] >= 11, f"{smallest['size']} px in .{smallest['label']}")
 
         # -- search inside the transcript ------------------------------------
         page.fill(".search", "Jazz")

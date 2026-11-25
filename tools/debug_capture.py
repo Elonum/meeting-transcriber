@@ -59,7 +59,7 @@ async def main(seconds: int, headed: bool) -> int:
         while loop.time() < deadline:
             try:
                 chunk = await asyncio.wait_for(agent._queue.get(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             chunks += 1
             total_bytes += len(chunk.pcm)

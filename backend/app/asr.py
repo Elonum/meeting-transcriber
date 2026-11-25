@@ -340,7 +340,7 @@ class WhisperRunner:
         return " ".join(segment.text.strip() for segment in segments).strip()
 
 
-_RUNNERS: dict[tuple[str, str, str], "WhisperRunner"] = {}
+_RUNNERS: dict[tuple[str, str, str], WhisperRunner] = {}
 _RUNNERS_LOCK = threading.Lock()
 
 
@@ -349,7 +349,7 @@ def get_runner(
     *,
     device: str = "auto",
     language: str = "ru",
-) -> "WhisperRunner":
+) -> WhisperRunner:
     """One runner per (model, device, language), shared by every session.
 
     Loading 1.6 GB of weights per meeting would make the second session in a row

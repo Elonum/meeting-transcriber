@@ -17,7 +17,6 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
-
 from app.asr import WhisperRunner
 
 

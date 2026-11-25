@@ -70,7 +70,6 @@ os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-e2e-", d
 @pytest.fixture(scope="module")
 def server():
     import uvicorn
-
     from app.main import app
 
     config = uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning")

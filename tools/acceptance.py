@@ -22,7 +22,7 @@ import json
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,7 +89,7 @@ async def check_ws(base: str) -> tuple[bool, str]:
             while time.time() < deadline:
                 try:
                     event = json.loads(await asyncio.wait_for(socket.recv(), timeout=5))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
                 kinds.add(event.get("type"))
                 if event.get("type") == "segment":
@@ -173,7 +173,7 @@ def main() -> int:
     record("WebSocket отдаёт события в реальном времени", ok, detail)
 
     # 7. scheduling: link + time ---------------------------------------------
-    start_at = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
+    start_at = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
     status, body, _ = call(
         base, "/api/sessions", "POST", {"meeting_url": MEETING, "start_at": start_at, "pipeline": "mock"}
     )
@@ -259,7 +259,7 @@ def finish(base: str) -> int:
     total = len(RESULTS)
     report = {
         "base": base,
-        "when": datetime.now(timezone.utc).isoformat(),
+        "when": datetime.now(UTC).isoformat(),
         "passed": passed,
         "total": total,
         "results": RESULTS,

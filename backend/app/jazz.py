@@ -14,6 +14,7 @@ from typing import Any
 from . import protocol as p
 from .asr import ASREvent, ParticipantASR, get_runner
 from .capture import BrowserAgent
+from .errors import describe_error
 from .faces import make_detector
 from .recording import SessionRecorder
 from .session import Emitter
@@ -118,7 +119,7 @@ class JazzPipeline:
             await emit(
                 p.ev_notice(
                     at(),
-                    f"Не удалось подключиться: {error}. Проверьте ссылку и доступ к встрече.",
+                    f"Не удалось подключиться: {describe_error(error)}",
                     "warn",
                 )
             )
@@ -179,9 +180,7 @@ class JazzPipeline:
                 await emit(
                     p.ev_notice(
                         at(),
-                        "Записано аудио: {tracks} дорожек, {size:.1f} МБ.".format(
-                            tracks=tracks, size=recorded_bytes / 1_000_000
-                        ),
+                        f"Записано аудио: {tracks} дорожек, {recorded_bytes / 1_000_000:.1f} МБ.",
                     )
                 )
             await emit(

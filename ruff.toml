@@ -1,0 +1,14 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "ASYNC"]
+ignore = [
+    # Long Russian notices are clearer as one string than as concatenated pieces.
+    "E501",
+]
+
+[lint.per-file-ignores]
+# The browser hook is JavaScript inside a Python string: its style is not ours.
+"backend/app/capture.py" = ["E501"]
+"backend/tests/test_capture_e2e.py" = ["E501"]

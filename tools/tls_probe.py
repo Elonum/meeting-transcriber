@@ -19,9 +19,11 @@ def main() -> int:
 
     # 1. Does the default (certifi) bundle accept it?
     try:
-        with socket.create_connection((host, 443), timeout=15) as sock:
-            with ssl.create_default_context().wrap_socket(sock, server_hostname=host):
-                print("default trust: OK")
+        with (
+            socket.create_connection((host, 443), timeout=15) as sock,
+            ssl.create_default_context().wrap_socket(sock, server_hostname=host),
+        ):
+            print("default trust: OK")
     except Exception as error:  # noqa: BLE001
         print(f"default trust: FAIL ({type(error).__name__}: {error})")
 
@@ -29,11 +31,13 @@ def main() -> int:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, 443), timeout=15) as sock:
-        with context.wrap_socket(sock, server_hostname=host) as tls:
-            der = tls.getpeercert(binary_form=True)
-            print("tls:", tls.version())
-            print("cipher:", tls.cipher()[0] if tls.cipher() else "?")
+    with (
+        socket.create_connection((host, 443), timeout=15) as sock,
+        context.wrap_socket(sock, server_hostname=host) as tls,
+    ):
+        der = tls.getpeercert(binary_form=True)
+        print("tls:", tls.version())
+        print("cipher:", tls.cipher()[0] if tls.cipher() else "?")
 
     try:
         from cryptography import x509

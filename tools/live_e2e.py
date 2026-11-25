@@ -13,6 +13,7 @@ and it launches browsers, so it must run outside the file sandbox.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import subprocess
 import sys
@@ -101,10 +102,8 @@ def main() -> int:
                 break
             time.sleep(3)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             post(f"/api/sessions/{session['id']}/stop", {})
-        except Exception:  # noqa: BLE001
-            pass
         if not args.keep_host:
             host.terminate()
             try:

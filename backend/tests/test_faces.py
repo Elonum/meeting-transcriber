@@ -12,7 +12,6 @@ import base64
 from pathlib import Path
 
 import pytest
-
 from app.faces import DEFAULT_YUNET, YuNetDetector, make_detector
 
 ROOT = Path(__file__).resolve().parents[2]
