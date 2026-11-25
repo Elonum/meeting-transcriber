@@ -21,9 +21,13 @@ from .session import Emitter
 
 log = logging.getLogger(__name__)
 
-#: How long to keep asking for a camera frame, in seconds between attempts.
-#: Sums to 40 s, which covers "включу камеру через полминуты".
-FACE_DELAYS = (4.0, 6.0, 8.0, 10.0, 12.0)
+#: Camera watcher schedule: first check after 5 s, then every 10 s for four
+#: minutes. People switch a camera on whenever they feel like it, so "no frame
+#: yet" must never turn into a permanent "без камеры" badge.
+FACE_FIRST_DELAY_S = 5.0
+FACE_INTERVAL_S = 10.0
+FACE_ATTEMPTS = 24
+FACE_DELAYS = (FACE_FIRST_DELAY_S,) + (FACE_INTERVAL_S,) * (FACE_ATTEMPTS - 1)
 
 
 def recording_enabled() -> bool:
@@ -357,19 +361,9 @@ class JazzPipeline:
         self._participant_state[track_id] = participant
         await self._emit(p.ev_participant(p.now_ms() - self._clock_start, participant))
 
-        info = self.agent._tracks.get(track_id)
-        if info is not None and info.video_track_id:
-            self._face_tasks.append(
-                asyncio.create_task(self._face_loop(participant_id, track_id))
-            )
-        elif self.detector.name == "none":
-            await self._emit(
-                p.ev_face(p.now_ms() - self._clock_start, participant_id, "none"),
-            )
-        else:
-            # No camera yet. People often turn one on mid-meeting, so keep asking
-            # for a while: the video track joins the same stream when it starts.
-            self._face_tasks.append(asyncio.create_task(self._face_loop(participant_id, track_id)))
+        # Always watch for a camera, whatever we saw at join time: people switch
+        # one on mid-meeting, and "no video track yet" is not "no camera".
+        self._face_tasks.append(asyncio.create_task(self._face_loop(participant_id, track_id)))
 
         if self.runner.resolved:
             await self._emit(

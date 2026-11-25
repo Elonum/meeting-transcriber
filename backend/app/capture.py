@@ -135,7 +135,7 @@ CAPTURE_JS = r"""
   if (window.__transcribeAgent) return;
 
   const SEND_EVERY_MS = 100;
-  const state = { tracks: new Map(), contexts: new Map(), started: false, errors: [] };
+  const state = { tracks: new Map(), contexts: new Map(), peers: new Set(), started: false, errors: [] };
   window.__transcribeAgent = state;
 
   const send = (key, payload) => {
@@ -222,14 +222,14 @@ CAPTURE_JS = r"""
     return null;
   };
 
-  const attach = (track, key, element) => {
+  const attach = (track, key, element, peer) => {
     if (!track || track.kind !== 'audio') return;
     if (state.tracks.has(key)) return;
     const entry = { key, kind: track.kind, label: track.label, name: null, videoTrackId: null, startedAt: Date.now() };
     if (element) {
       entry.name = nameForElement(element);
-      // Face snapshots are taken from the participant's video track, so keep the
-      // id of the video element's track alongside the audio one.
+      // The element holding the audio stream sometimes carries the video track
+      // too; when it does not, the peer connection below supplies it later.
       try {
         const stream = element.srcObject;
         if (stream && stream.getVideoTracks) {
@@ -238,6 +238,7 @@ CAPTURE_JS = r"""
         }
       } catch (e) {}
     }
+    if (!entry.videoTrackId && peer && peer.videoTrackId) entry.videoTrackId = peer.videoTrackId;
     state.tracks.set(key, entry);
     try { ensureMonitor(track, key); } catch (e) { state.errors.push(String(e)); }
     window.__submitTrack(JSON.stringify(entry));
@@ -247,6 +248,11 @@ CAPTURE_JS = r"""
   if (originalPC) {
     window.RTCPeerConnection = function (...args) {
       const pc = new originalPC(...args);
+      // One peer connection per remote participant carries both their audio and
+      // their video. SaluteJazz renders them into different media elements, so
+      // matching by element is hopeless: match by connection.
+      const peer = { pc, audioKey: null, videoTrackId: null };
+      state.peers.add(peer);
       const endTrack = (track) => {
         if (!track) return;
         try { window.__trackEnded(track.id); } catch (e) { state.errors.push(String(e)); }
@@ -264,27 +270,72 @@ CAPTURE_JS = r"""
         // A remote track that ends (the person hung up) is the clearest signal
         // that they left; the participant list lags by a few seconds.
         track.addEventListener('ended', () => endTrack(track));
+        if (track.kind === 'video') {
+          peer.videoTrackId = track.id;
+          if (peer.audioKey) {
+            const entry = state.tracks.get(peer.audioKey);
+            if (entry && !entry.videoTrackId) {
+              entry.videoTrackId = track.id;
+              window.__submitTrack(JSON.stringify(entry));
+            }
+          }
+          return;
+        }
+        if (track.kind !== 'audio') return;
         const streams = event.streams || [];
         const key = track.id;
         const element = Array.from(document.querySelectorAll('video, audio')).find((node) => {
           const stream = node.srcObject;
           return stream && stream.getTracks && stream.getTracks().some((t) => t.id === track.id);
         });
-        const describe = (node) => attach(track, key, node);
-        if (element) describe(element);
-        else setTimeout(() => {
-          const found = Array.from(document.querySelectorAll('video, audio')).find((node) => {
-            const stream = node.srcObject;
-            return stream && stream.getTracks && stream.getTracks().some((t) => t.id === track.id);
-          });
-          describe(found || null);
-        }, 1200);
+        const describe = (node) => {
+          attach(track, key, node, peer);
+          peer.audioKey = key;
+        };
+        describe(element);
+        if (!element) {
+          setTimeout(() => {
+            const found = Array.from(document.querySelectorAll('video, audio')).find((node) => {
+              const stream = node.srcObject;
+              return stream && stream.getTracks && stream.getTracks().some((t) => t.id === track.id);
+            });
+            if (found && !state.tracks.has(key)) attach(track, key, found, peer);
+            peer.audioKey = key;
+          }, 1200);
+        }
         void streams;
       });
       return pc;
     };
     window.RTCPeerConnection.prototype = originalPC.prototype;
   }
+
+  // What the agent can actually see, for /api/logs, the diagnostics tool and
+  // tests: which connections exist and which kinds of tracks they deliver.
+  window.__transcribeDiagnostics = () => ({
+    peers: Array.from(state.peers).map((peer) => {
+      let received = [];
+      try {
+        received = peer.pc.getReceivers().map((receiver) => `${receiver.track.kind}:${receiver.track.id}`);
+      } catch (e) {}
+      return {
+        audioKey: peer.audioKey,
+        videoTrackId: peer.videoTrackId,
+        connection: (() => { try { return peer.pc.connectionState; } catch (e) { return null; } })(),
+        receivers: received,
+      };
+    }),
+    tracks: Array.from(state.tracks.values()).map((entry) => ({
+      key: entry.key,
+      name: entry.name,
+      videoTrackId: entry.videoTrackId,
+    })),
+    videos: Array.from(document.querySelectorAll('video')).map((node) => ({
+      width: node.videoWidth,
+      height: node.videoHeight,
+      tracks: node.srcObject ? node.srcObject.getTracks().map((t) => `${t.kind}:${t.id}`) : [],
+    })),
+  });
 
   window.__probeAgentStop = () => {
     state.contexts.forEach((handle) => {
@@ -823,7 +874,16 @@ class BrowserAgent:
         except Exception:  # noqa: BLE001
             return
         track_id = str(data.get("key", ""))
-        if not track_id or track_id in self._tracks:
+        if not track_id:
+            return
+        existing = self._tracks.get(track_id)
+        if existing is not None:
+            # A second message for the same participant carries the video track
+            # that arrived after the audio one (camera switched on mid-call).
+            video = str(data.get("videoTrackId") or "")
+            if video and not existing.video_track_id:
+                existing.video_track_id = video
+                log.info("agent: video track for %s is now known", existing.name)
             return
         name = (data.get("name") or "").strip()
         if not name or len(name) > 60:
@@ -871,12 +931,25 @@ class BrowserAgent:
         while True:
             yield await self._queue.get()
 
+    async def diagnostics(self) -> dict[str, Any]:
+        """What the page says about connections, tracks and video elements.
+
+        Cheap and side-effect free: it answers "is this person's camera reaching
+        us at all", which is the first question when a face is missing.
+        """
+        try:
+            return await self.page.evaluate(
+                "() => (window.__transcribeDiagnostics ? window.__transcribeDiagnostics() : {})"
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never raise
+            return {}
+
     async def grab_face(self, track_id: str, max_width: int = 320) -> str | None:
         """A JPEG frame of the participant behind this audio track, if any.
 
         The key is the audio track id on purpose: a camera switched on later
-        joins the same stream, and the video id we saw at join time would be
-        stale by then.
+        arrives on the same peer connection, and the video id seen at join time
+        would be stale by then.
         """
         try:
             return await self.page.evaluate(

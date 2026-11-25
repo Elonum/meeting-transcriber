@@ -320,3 +320,50 @@ def test_patch_merges_into_the_participant(tmp_path) -> None:
     assert participant["face_status"] == "detected"
     assert participant["present"] is False
     assert participant["role"] == "human"
+
+
+def test_video_track_arriving_later_is_accepted() -> None:
+    """A camera switched on mid-call sends a second message for the same track."""
+    from app.capture import BrowserAgent
+
+    agent = BrowserAgent("https://salutejazz.ru/calls/abc123")
+    agent._on_track(None, '{"key": "track-1", "name": "Гость"}')
+    assert agent._tracks["track-1"].video_track_id is None
+
+    agent._on_track(None, '{"key": "track-1", "name": "Гость", "videoTrackId": "TR_VIDEO"}')
+
+    assert agent._tracks["track-1"].video_track_id == "TR_VIDEO"
+    assert len(agent._tracks) == 1, "the second message must not create a duplicate"
+
+
+def test_face_watcher_starts_even_without_a_video_track() -> None:
+    """No video at join time is not "no camera": the watcher must keep looking."""
+    agent = FrameAgent([])
+    pipeline = JazzPipeline("https://salutejazz.ru/calls/abc123", agent=agent)
+    collect(pipeline)
+    pipeline._clock_start = 0
+    pipeline._participants["track-1"] = "p-1"
+
+    async def scenario() -> None:
+        await pipeline._register_track("track-1", "Гость")
+        tasks = list(pipeline._face_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+    assert pipeline._face_tasks, "a watcher task must be scheduled"
+
+
+def test_no_detector_is_not_reported_as_missing_camera() -> None:
+    """Without a detector we still report a frame, never "без камеры"."""
+    agent = FrameAgent(["data:image/jpeg;base64,AAAA"])
+    pipeline = JazzPipeline("https://salutejazz.ru/calls/abc123", agent=agent)
+    pipeline.detector = type("NoDetector", (), {"name": "none", "detect": lambda self, frame: None})()
+    events = collect(pipeline)
+
+    asyncio.run(pipeline._face_loop("p-1", "track-1", delays=(0,)))
+
+    faces = [e for e in events if e["type"] == "face"]
+    assert [f["status"] for f in faces] == ["frame"]
