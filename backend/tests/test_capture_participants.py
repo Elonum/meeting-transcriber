@@ -147,3 +147,35 @@ def test_console_noise_is_filtered() -> None:
     assert is_console_noise("Trying to init when instance already exists. []")
     assert is_console_noise("Permissions policy violation: unload is not allowed in this document.")
     assert not is_console_noise("Failed to fetch participant list")
+
+
+def test_a_page_without_a_participant_list_does_not_disconnect() -> None:
+    """A test double (or a changed client) has no tiles; that is not a departure."""
+    agent = agent_with_tracks("Анна Соколова")
+
+    first = agent.sync_names([])
+    second = agent.sync_names([])
+
+    assert first == [] and second == []
+    assert agent._tracks["track-1"].present is True
+    assert agent.human_present is True, "presence must come from the tracks when no list exists"
+
+
+def test_presence_is_inferred_from_tracks_when_no_list_exists() -> None:
+    agent = agent_with_tracks("Анна Соколова")
+    agent.sync_names([])
+    agent._tracks["track-1"].present = False
+
+    agent.sync_names([])
+
+    assert agent.human_present is False
+
+
+def test_departure_needs_a_list_that_was_actually_seen() -> None:
+    agent = agent_with_tracks("Анна Соколова")
+    agent.sync_names(["Анна Соколова"])  # the room does have a list now
+
+    agent.sync_names([])
+    updates = agent.sync_names([])
+
+    assert [(u.track_id, u.present) for u in updates] == [("track-1", False)]

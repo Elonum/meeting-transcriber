@@ -38,3 +38,23 @@ def test_redact_text_handles_a_sentence() -> None:
 def test_garbage_input_is_returned_as_is() -> None:
     assert redact_url("not a url") == "not a url"
     assert redact_text("no links here") == "no links here"
+
+
+def test_console_notes_are_redacted(monkeypatch) -> None:
+    """A page error may quote the invite URL; the note must not carry the password."""
+    from types import SimpleNamespace
+
+    from app.capture import BrowserAgent
+
+    agent = BrowserAgent("https://salutejazz.ru/calls/abc123?psw=SECRET")
+    agent._on_console(
+        SimpleNamespace(
+            type="error",
+            text="Failed to fetch https://salutejazz.ru/calls/abc123?psw=SECRET",
+        )
+    )
+    agent._on_console(SimpleNamespace(type="warning", text="The ScriptProcessorNode is deprecated"))
+
+    assert len(agent.notes) == 1
+    assert "SECRET" not in agent.notes[0]
+    assert "psw=" in agent.notes[0]

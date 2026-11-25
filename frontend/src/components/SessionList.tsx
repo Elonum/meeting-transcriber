@@ -5,6 +5,8 @@ import { roomLabel } from '../link'
 
 interface SessionListProps {
   sessions: SessionInfo[]
+  /** Matches on the server; can be larger than what the page shows. */
+  total: number
   activeId: string | null
   query: string
   searching: boolean
@@ -16,6 +18,7 @@ interface SessionListProps {
 /** History with search over transcripts and a two-step delete. */
 export function SessionList({
   sessions,
+  total,
   activeId,
   query,
   searching,
@@ -58,6 +61,12 @@ export function SessionList({
         onChange={(event) => onQueryChange(event.target.value)}
         aria-label="Поиск по истории"
       />
+
+      {total > sessions.length && (
+        <p className="history__more">
+          Показаны последние {sessions.length} из {total}
+        </p>
+      )}
 
       {sessions.length === 0 ? (
         <p className="history__empty">

@@ -14,6 +14,7 @@ import pytest
 from app.main import DATA_DIR, app  # noqa: F401 - importing sets the data dir
 from app.recording import TrackRecorder
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 MEETING = "https://salutejazz.ru/calls/abc123?psw=ZZZZZZZZ"
 
@@ -181,3 +182,20 @@ def test_history_is_limited_but_reports_the_real_total(client: TestClient) -> No
 def test_history_limit_is_clamped(client: TestClient) -> None:
     assert client.get("/api/sessions", params={"limit": 0}).json()["limit"] == 1
     assert client.get("/api/sessions", params={"limit": 5000}).json()["limit"] == 200
+
+
+def test_deleting_closes_open_streams(client: TestClient) -> None:
+    """A deleted meeting must not stay "live" in another browser tab."""
+    session_id = client.post(
+        "/api/sessions", json={"meeting_url": MEETING, "title": "Открыта в двух вкладках", "speed": 0.5}
+    ).json()["id"]
+
+    with client.websocket_connect(f"/events/{session_id}") as socket:
+        socket.receive_json()  # hello
+        assert client.delete(f"/api/sessions/{session_id}").status_code == 204
+        # The server closes with our "session is gone" code instead of pinging forever.
+        with pytest.raises(WebSocketDisconnect) as closed:
+            for _ in range(30):
+                socket.receive_json()
+
+    assert closed.value.code == 4404

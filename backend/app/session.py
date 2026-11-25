@@ -206,6 +206,16 @@ class Session:
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
         self._subscribers.discard(queue)
 
+    def notify_gone(self) -> None:
+        """Tell open streams that this session is gone, so they can close.
+
+        Without this a deleted meeting stays "live" in every other tab: the
+        socket keeps pinging a session nobody will ever write to again.
+        """
+        for queue in list(self._subscribers):
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait({"type": "gone", "at_ms": 0})
+
     async def emit(self, event: dict[str, Any]) -> None:
         self.apply(event)
         self._write_event(event)
@@ -319,6 +329,7 @@ class SessionManager:
             await session.stop()
         except Exception:  # noqa: BLE001 - deleting must not fail because of a task
             log.exception("delete: could not stop session %s", session_id)
+        session.notify_gone()
         # Defence in depth: only remove a directory that is really inside data_dir.
         target = session.dir.resolve()
         root = self.data_dir.resolve()

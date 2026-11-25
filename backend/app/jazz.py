@@ -93,6 +93,9 @@ class JazzPipeline:
         self._participant_state: dict[str, dict[str, Any]] = {}  # track_id -> session dict
         self._asr: dict[str, ParticipantASR] = {}
         self._face_tasks: list[asyncio.Task[None]] = []
+        #: Watcher per participant, so it can be stopped when that person leaves
+        #: instead of polling a dead track until the meeting ends.
+        self._face_by_participant: dict[str, asyncio.Task[None]] = {}
         self._emit: Emitter | None = None
         self._index = 0
         self.recorder: SessionRecorder | None = None
@@ -277,6 +280,10 @@ class JazzPipeline:
             state["present"] = present
             if not present:
                 state["speaking"] = False
+                # Nobody is on screen any more: stop asking for their camera.
+                watcher = self._face_by_participant.pop(state["id"], None)
+                if watcher is not None and not watcher.done():
+                    watcher.cancel()
             patch["present"] = present
             if not present:
                 patch["speaking"] = False
@@ -368,7 +375,9 @@ class JazzPipeline:
 
         # Always watch for a camera, whatever we saw at join time: people switch
         # one on mid-meeting, and "no video track yet" is not "no camera".
-        self._face_tasks.append(asyncio.create_task(self._face_loop(participant_id, track_id)))
+        task = asyncio.create_task(self._face_loop(participant_id, track_id))
+        self._face_tasks.append(task)
+        self._face_by_participant[participant_id] = task
 
         if self.runner.resolved:
             await self._emit(

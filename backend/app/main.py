@@ -94,6 +94,7 @@ async def lifespan(_: FastAPI):
             model=str(session.options.get("model", "large-v3-turbo")),
             speed=float(session.options.get("speed", 1.0)),
             password=session.options.get("password"),
+            language=session.options.get("language"),
         )
         await session.start(speed=float(session.options.get("speed", 1.0)))
         log.info("re-armed scheduled session %s", session.id)
@@ -432,6 +433,9 @@ async def events(socket: WebSocket, session_id: str) -> None:
             except TimeoutError:
                 await socket.send_text(json.dumps({"type": "ping", "at_ms": 0}))
                 continue
+            if event.get("type") == "gone":
+                await socket.close(code=4404)
+                return
             await socket.send_text(json.dumps(event, ensure_ascii=False))
     except (WebSocketDisconnect, RuntimeError):
         pass

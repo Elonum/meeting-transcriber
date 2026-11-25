@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import AgentUnavailableError, describe_error
-from .security import redact_url
+from .security import redact_text, redact_url
 
 log = logging.getLogger(__name__)
 
@@ -222,14 +222,41 @@ CAPTURE_JS = r"""
     return null;
   };
 
+  // Details that arrive late (a tile painted after the track, a camera switched
+  // on later) update the entry; they never create a second one.
+  const refine = (entry, element, peer) => {
+    if (!entry) return;
+    let changed = false;
+    if (element && !entry.name) {
+      const name = nameForElement(element);
+      if (name) { entry.name = name; changed = true; }
+    }
+    if (!entry.videoTrackId) {
+      let videoId = peer && peer.videoTrackId ? peer.videoTrackId : null;
+      if (!videoId && element) {
+        try {
+          const stream = element.srcObject;
+          const video = stream && stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+          if (video) videoId = video.id;
+        } catch (e) {}
+      }
+      if (videoId) { entry.videoTrackId = videoId; changed = true; }
+    }
+    if (changed) window.__submitTrack(JSON.stringify(entry));
+  };
+
   const attach = (track, key, element, peer) => {
     if (!track || track.kind !== 'audio') return;
-    if (state.tracks.has(key)) return;
+    const existing = state.tracks.get(key);
+    if (existing) {
+      refine(existing, element, peer);
+      return;
+    }
+    // The entry is created even without a media element: audio capture must never
+    // depend on the page having rendered a tile yet.
     const entry = { key, kind: track.kind, label: track.label, name: null, videoTrackId: null, startedAt: Date.now() };
     if (element) {
       entry.name = nameForElement(element);
-      // The element holding the audio stream sometimes carries the video track
-      // too; when it does not, the peer connection below supplies it later.
       try {
         const stream = element.srcObject;
         if (stream && stream.getVideoTracks) {
@@ -289,6 +316,8 @@ CAPTURE_JS = r"""
           return stream && stream.getTracks && stream.getTracks().some((t) => t.id === track.id);
         });
         const describe = (node) => {
+          // Attach even when no element is found yet: the entry is what starts
+          // audio capture, and a missing tile must not cost us the track.
           attach(track, key, node, peer);
           peer.audioKey = key;
         };
@@ -299,8 +328,7 @@ CAPTURE_JS = r"""
               const stream = node.srcObject;
               return stream && stream.getTracks && stream.getTracks().some((t) => t.id === track.id);
             });
-            if (found && !state.tracks.has(key)) attach(track, key, found, peer);
-            peer.audioKey = key;
+            if (found) refine(state.tracks.get(key), found, peer);
           }, 1200);
         }
         void streams;
@@ -530,6 +558,9 @@ class BrowserAgent:
         #: to be missing this many polls in a row before we call it a departure.
         self.absence_strikes = 2
         self._strikes: dict[str, int] = {}
+        #: True once the page actually listed participants. Until then an empty
+        #: list means "no list here", not "nobody is in the room".
+        self._names_available = False
         self._sync_task: asyncio.Task | None = None
         self.notes: list[str] = []
         self.crashed = False
@@ -760,10 +791,20 @@ class BrowserAgent:
           name — give it the real one as soon as the room lists it;
         * a name that disappears from the room means the person left. Their track
           often stays alive at the SFU, so the DOM is the only signal.
+
+        A page without a readable participant list (a test double, a client whose
+        markup changed) must never be read as "everybody left": then presence can
+        only come from the tracks themselves.
         """
         clean = [name for name in names if name and name != self.display_name]
+        if clean:
+            self._names_available = True
         self._remote_names = clean
-        self.human_present = bool(clean)
+
+        if self._names_available:
+            self.human_present = bool(clean)
+        else:
+            self.human_present = any(info.present for info in self._tracks.values())
 
         updates: list[ParticipantUpdate] = []
 
@@ -778,6 +819,10 @@ class BrowserAgent:
             info.present = True
             used.add(candidate)
             updates.append(ParticipantUpdate(track_id=info.track_id, name=candidate, present=True))
+
+        if not self._names_available:
+            # Without a list there is nothing to compare against.
+            return updates
 
         listed = set(clean)
         for info in self._tracks.values():
@@ -844,7 +889,8 @@ class BrowserAgent:
         """Keep join diagnostics, drop the warnings every browser prints."""
         if message.type not in ("error", "warning"):
             return
-        text = f"console.{message.type}: {message.text}"
+        # Page errors can quote a URL that carries the meeting password.
+        text = redact_text(f"console.{message.type}: {message.text}")
         if is_console_noise(message.text):
             log.debug("agent: %s", text)
             return
@@ -878,12 +924,20 @@ class BrowserAgent:
             return
         existing = self._tracks.get(track_id)
         if existing is not None:
-            # A second message for the same participant carries the video track
-            # that arrived after the audio one (camera switched on mid-call).
+            # A second message for the same participant carries what arrived after
+            # the audio track: the video track (camera switched on mid-call) or
+            # the display name (the tile was painted after the track).
             video = str(data.get("videoTrackId") or "")
             if video and not existing.video_track_id:
                 existing.video_track_id = video
                 log.info("agent: video track for %s is now known", existing.name)
+            late_name = str(data.get("name") or "").strip()
+            if late_name and not is_placeholder(late_name) and late_name != existing.name:
+                log.info("agent: track %s renamed to %s", existing.track_id[:8], late_name)
+                existing.name = late_name
+                self._safe_put(
+                    self.updates, ParticipantUpdate(track_id=existing.track_id, name=late_name)
+                )
             return
         name = (data.get("name") or "").strip()
         if not name or len(name) > 60:

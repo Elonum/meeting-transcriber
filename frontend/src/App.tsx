@@ -23,6 +23,7 @@ export default function App() {
   const { theme, toggle } = useTheme()
 
   const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [sessionsTotal, setSessionsTotal] = useState(0)
   const [activeId, setActiveId] = useState<string | null>(sessionFromUrl)
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -41,8 +42,9 @@ export default function App() {
   const refresh = useCallback(async () => {
     setSearching(true)
     try {
-      const { sessions: list } = await listSessions(debouncedQuery)
+      const { sessions: list, total } = await listSessions(debouncedQuery)
       setSessions(list)
+      setSessionsTotal(total)
       setLoadError(null)
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : 'Сервер недоступен')
@@ -64,6 +66,14 @@ export default function App() {
   useEffect(() => {
     if (stream.session) void refresh()
   }, [stream.session?.state, refresh, stream.session])
+
+  // If the meeting was deleted in another tab, the stream says so; stop showing
+  // a live screen for something that no longer exists.
+  useEffect(() => {
+    if (!stream.gone || !activeId) return
+    setActiveId(null)
+    setLoadError('Эта встреча удалена — выберите другую или начните новую.')
+  }, [stream.gone, activeId])
 
   // A session link is shareable: keep it in the address bar.
   useEffect(() => {
@@ -121,6 +131,7 @@ export default function App() {
         <NewSessionForm busy={busy} onCreate={onCreate} />
         <SessionList
           sessions={sessions}
+          total={sessionsTotal}
           activeId={activeId}
           query={query}
           searching={searching}

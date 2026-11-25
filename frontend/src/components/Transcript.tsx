@@ -9,6 +9,9 @@ interface TranscriptProps {
   live: boolean
 }
 
+/** A two-hour meeting is thousands of lines; the DOM only needs the last ones. */
+const MAX_RENDERED = 400
+
 export function Transcript({ timeline, participants, live }: TranscriptProps) {
   const [query, setQuery] = useState('')
   const [follow, setFollow] = useState(true)
@@ -29,11 +32,17 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
     )
   }, [timeline, query])
 
+  const visible = useMemo(
+    () => (filtered.length > MAX_RENDERED ? filtered.slice(-MAX_RENDERED) : filtered),
+    [filtered],
+  )
+  const hidden = filtered.length - visible.length
+
   useEffect(() => {
     const node = scroller.current
     if (!node || !follow) return
     node.scrollTop = node.scrollHeight
-  }, [filtered.length, follow, timeline])
+  }, [visible.length, follow, timeline])
 
   const onScroll = () => {
     const node = scroller.current
@@ -89,7 +98,13 @@ export function Transcript({ timeline, participants, live }: TranscriptProps) {
           </p>
         )}
 
-        {filtered.map((item) => {
+        {hidden > 0 && (
+          <p className="feed__truncated">
+            Показаны последние {visible.length} из {filtered.length}. Полный протокол — в экспорте.
+          </p>
+        )}
+
+        {visible.map((item) => {
           if (item.kind === 'notice') {
             return (
               <p key={item.id} className="feed__notice">

@@ -368,3 +368,47 @@ def test_no_detector_is_not_reported_as_missing_camera() -> None:
 
     faces = [e for e in events if e["type"] == "face"]
     assert [f["status"] for f in faces] == ["frame"]
+
+
+def test_face_watcher_stops_when_the_participant_leaves() -> None:
+    """Polling a dead track for the rest of the meeting is pure waste."""
+    pipeline = make_pipeline()
+    collect(pipeline)
+    pipeline._participants["track-1"] = "p-1"
+    pipeline._participant_state["track-1"] = p.new_participant("p-1", "Роман")
+
+    async def scenario() -> asyncio.Task:
+        watcher = asyncio.create_task(asyncio.sleep(3600))
+        pipeline._face_by_participant["p-1"] = watcher
+        await pipeline._apply_participant_update(ParticipantUpdate("track-1", present=False))
+        await asyncio.sleep(0)
+        return watcher
+
+    watcher = asyncio.run(scenario())
+
+    assert watcher.cancelled()
+    assert "p-1" not in pipeline._face_by_participant
+
+
+def test_pipeline_language_is_configurable() -> None:
+    """A pinned language must reach the shared runner, not be dropped on the way."""
+    from app.jazz import JazzPipeline
+
+    pipeline = JazzPipeline("https://salutejazz.ru/calls/abc123", language="en")
+
+    assert pipeline.language == "en"
+    assert pipeline.runner.language == "en"
+
+
+def test_late_name_update_is_applied() -> None:
+    """The tile can be painted after the track: the name must still land."""
+    from app.capture import BrowserAgent
+
+    agent = BrowserAgent("https://salutejazz.ru/calls/abc123")
+    agent._on_track(None, '{"key": "track-1", "name": "Участник 1"}')
+
+    agent._on_track(None, '{"key": "track-1", "name": "Анна Соколова"}')
+
+    assert agent._tracks["track-1"].name == "Анна Соколова"
+    update = agent.updates.get_nowait()
+    assert update.track_id == "track-1" and update.name == "Анна Соколова"

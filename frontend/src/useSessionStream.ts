@@ -9,6 +9,7 @@ interface StreamState {
   notices: Notice[]
   connected: boolean
   doneReason: string | null
+  gone: boolean
 }
 
 const initialState: StreamState = {
@@ -19,16 +20,19 @@ const initialState: StreamState = {
   notices: [],
   connected: false,
   doneReason: null,
+  gone: false,
 }
 
 type Action =
   | { type: 'reset' }
   | { type: 'connected'; value: boolean }
+  | { type: 'gone' }
   | { type: 'event'; event: ServerEvent }
 
 function reducer(state: StreamState, action: Action): StreamState {
   if (action.type === 'reset') return { ...initialState }
   if (action.type === 'connected') return { ...state, connected: action.value }
+  if (action.type === 'gone') return { ...state, gone: true, connected: false }
 
   const event = action.event
   switch (event.type) {
@@ -41,6 +45,7 @@ function reducer(state: StreamState, action: Action): StreamState {
         notices: state.notices,
         connected: true,
         doneReason: null,
+        gone: false,
       }
     case 'session':
       if (!state.session) return state
@@ -132,6 +137,8 @@ export interface SessionStream {
   connected: boolean
   doneReason: string | null
   finals: number
+  /** The session disappeared on the server (deleted elsewhere). */
+  gone: boolean
 }
 
 /** Subscribes to one session's event stream and folds it into view state. */
@@ -165,8 +172,14 @@ export function useSessionStream(sessionId: string | null): SessionStream {
         dispatch({ type: 'event', event })
       }
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         dispatch({ type: 'connected', value: false })
+        // 4404 is our own "no such session": it was deleted, so reconnecting
+        // forever would spin against a meeting that no longer exists.
+        if (event.code === 4404) {
+          dispatch({ type: 'gone' })
+          return
+        }
         const finished = latest.current.session?.state === 'finished' || latest.current.session?.state === 'failed'
         if (!disposed && !finished) retryTimer = window.setTimeout(connect, 1500)
       }
@@ -208,5 +221,6 @@ export function useSessionStream(sessionId: string | null): SessionStream {
     connected: state.connected,
     doneReason: state.doneReason,
     finals: Object.keys(state.finals).length,
+    gone: state.gone,
   }
 }
