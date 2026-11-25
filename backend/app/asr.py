@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sysconfig
 import threading
 from dataclasses import dataclass
@@ -75,6 +76,84 @@ class ASREvent:
     end_ms: int = 0
     #: Language the utterance was spoken in, as detected by Whisper.
     language: str | None = None
+
+
+#: Whisper was trained on subtitled video, so on clicks and music it "remembers"
+#: closing credits. These phrases never belong in a meeting transcript: without
+#: this filter a silent microphone with a keyboard produced "Продолжение
+#: следует…", "Смотрите продолжение в следующей серии" and
+#: "ご視聴ありがとうございました".
+HALLUCINATION_PHRASES = (
+    "продолжение следует",
+    "продолжение в следующей серии",
+    "смотрите продолжение",
+    "спасибо за просмотр",
+    "подписывайтесь на канал",
+    "ставьте лайки",
+    "нажмите на колокольчик",
+    "звучит музыка",
+    "играет музыка",
+    "субтитры сделал",
+    "субтитры подготовил",
+    "редактор субтитров",
+    "thanks for watching",
+    "please subscribe",
+    "subscribe to my channel",
+    "like and subscribe",
+    "ご視聴ありがとうございました",
+    "最後までご視聴",
+    "チャンネル登録",
+)
+
+#: Words from the glossary. On silence or noise Whisper "continues" the prompt and
+#: returns these instead of speech ("Jazz, Jazz"), so an answer made only of them
+#: is not a transcript either.
+_TOKEN_RE = re.compile(r"[0-9a-zа-я]+")
+
+
+def prompt_tokens(prompt: str | None) -> frozenset[str]:
+    if not prompt:
+        return frozenset()
+    return frozenset(_TOKEN_RE.findall(normalize_text(prompt)))
+
+
+def looks_like_prompt_echo(text: str, tokens: frozenset[str]) -> bool:
+    """True when the "transcript" is just words borrowed from the prompt."""
+    words = _TOKEN_RE.findall(normalize_text(text))
+    if not words or len(words) > 4 or not tokens:
+        return False
+    return all(word in tokens for word in words)
+
+
+#: Segment statistics below these values mean "the model was guessing".
+NO_SPEECH_MAX = 0.6
+AVG_LOGPROB_MIN = -1.0
+COMPRESSION_MAX = 2.4
+
+
+def normalize_text(text: str) -> str:
+    """Lowercase, collapse spaces, drop punctuation — for phrase matching."""
+    lowered = " ".join(text.lower().replace("ё", "е").split())
+    return lowered.strip(" .,!?…—-–\"'«»()[]{}:;")
+
+
+def looks_like_hallucination(text: str) -> bool:
+    """True for stock subtitle credits and for text with no words at all."""
+    normalized = normalize_text(text)
+    if not normalized:
+        return True
+    if not any(character.isalnum() for character in normalized):
+        return True
+    return any(phrase in normalized for phrase in HALLUCINATION_PHRASES)
+
+
+def segment_is_noise(segment: Any) -> bool:
+    """Trust Whisper's own confidence: a guess is not a transcript."""
+    if getattr(segment, "no_speech_prob", 0.0) > NO_SPEECH_MAX:
+        return True
+    if getattr(segment, "avg_logprob", 0.0) < AVG_LOGPROB_MIN:
+        return True
+    return getattr(segment, "compression_ratio", 0.0) > COMPRESSION_MAX
 
 
 #: Vocabulary that Whisper otherwise guesses: the product name came back as
@@ -145,6 +224,7 @@ class SpeechDetector:
         speech_rms: float = 0.018,
         silence_rms: float = 0.008,
         min_speech_ms: int = 240,
+        min_voiced_run_ms: int = 150,
         silence_ms: int = 620,
         max_segment_ms: int = 14_000,
         pad_ms: int = 180,
@@ -155,6 +235,9 @@ class SpeechDetector:
         self.speech_rms = speech_rms
         self.silence_rms = silence_rms
         self.min_voiced_frames = max(1, int(min_speech_ms / frame_ms))
+        #: Keyboard clicks are single loud frames. Speech is a sustained run, so a
+        #: segment also needs one uninterrupted voiced stretch of this length.
+        self.min_voiced_run_frames = max(1, int(min_voiced_run_ms / frame_ms))
         self.silence_frames = max(1, int(silence_ms / frame_ms))
         self.max_frames = max(1, int(max_segment_ms / frame_ms))
         self.pad_frames = max(0, int(pad_ms / frame_ms))
@@ -166,6 +249,8 @@ class SpeechDetector:
         self._segment: list[np.ndarray] = []
         self._segment_index = 0
         self._voiced = 0
+        self._run = 0
+        self._max_run = 0
         self._trailing = 0
         self._silence_run = 0
         self._in_speech = False
@@ -207,6 +292,8 @@ class SpeechDetector:
                     self._segment_index = self._preroll_index
                     self._segment.append(chunk)
                     self._voiced = 1
+                    self._run = 1
+                    self._max_run = 1
                     self._trailing = 0
                     self._silence_run = 0
                     self._preroll.clear()
@@ -228,9 +315,12 @@ class SpeechDetector:
                 self._segment.append(chunk)
                 if voiced:
                     self._voiced += 1
+                    self._run += 1
+                    self._max_run = max(self._max_run, self._run)
                     self._trailing = 0
                     self._silence_run = 0
                 else:
+                    self._run = 0
                     self._trailing += 1
                     self._silence_run += 1
 
@@ -254,6 +344,7 @@ class SpeechDetector:
 
     def _close(self, *, forced: bool = False) -> list[DetectorEvent] | None:
         voiced = self._voiced
+        max_run = self._max_run
         keep_tail = min(self._trailing, self.tail_frames)
         drop = self._trailing - keep_tail
         frames = self._segment[:-drop] if drop > 0 else list(self._segment)
@@ -266,12 +357,19 @@ class SpeechDetector:
         self._segment = []
         self._segment_index = 0
         self._voiced = 0
+        self._run = 0
+        self._max_run = 0
         self._trailing = 0
         self._silence_run = 0
         self._preroll.clear()
 
         events = [DetectorEvent("speech_stop", start_ms=self._ms(end_index), end_ms=self._ms(end_index))]
         if voiced < self.min_voiced_frames:
+            return events
+        if max_run < self.min_voiced_run_frames:
+            # Short bursts: typing, a door, a notification. Sending this to
+            # Whisper is how "Продолжение следует…" ends up in the transcript.
+            log.debug("detector: dropped %d ms of impulsive noise", voiced * self.frame_ms)
             return events
         events.append(
             DetectorEvent("segment", start_ms=self._ms(start_index), end_ms=self._ms(end_index), pcm=audio)
@@ -300,6 +398,7 @@ class WhisperRunner:
         self.language = language
         self.beam_size = beam_size
         self.prompt = prompt
+        self._prompt_tokens = prompt_tokens(prompt)
         self.resolved: str | None = None
         self._model: Any = None
         self._lock = threading.Lock()  # guards lazy model construction
@@ -381,7 +480,21 @@ class WhisperRunner:
             compression_ratio_threshold=2.4,
             initial_prompt=self.prompt,
         )
-        text = " ".join(segment.text.strip() for segment in segments).strip()
+        kept: list[str] = []
+        for segment in segments:
+            if segment_is_noise(segment):
+                log.debug("asr: dropped a low-confidence segment")
+                continue
+            candidate = segment.text.strip()
+            if looks_like_hallucination(candidate):
+                log.debug("asr: dropped a stock phrase: %s", candidate[:60])
+                continue
+            if looks_like_prompt_echo(candidate, self._prompt_tokens):
+                log.debug("asr: dropped prompt echo: %s", candidate[:60])
+                continue
+            kept.append(candidate)
+
+        text = " ".join(kept).strip()
         return Transcript(
             text=text,
             language=getattr(info, "language", None),
