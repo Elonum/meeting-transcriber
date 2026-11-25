@@ -506,3 +506,6 @@ MIT — см. [LICENSE](LICENSE).
 `.github/workflows/ci.yml` на каждый push и pull request прогоняет тесты бэкенда (Python 3.12) и
 сборку фронтенда (Node 22). Тесты лиц пропускаются без файла модели, а сквозной тест с браузером
 включается только переменной `TRANSCRIBE_E2E=1` — поэтому CI не требует ни GPU, ни Chromium.
+
+Формат сообщений коммитов, типы и области описаны в [CONTRIBUTING.md](CONTRIBUTING.md); там же —
+хук `.githooks/commit-msg`, который не даёт отступить от формата.

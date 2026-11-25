@@ -59,11 +59,18 @@ def _get(path: str) -> dict:
         return json.loads(response.read())
 
 
+# Keep generated sessions inside the repository's gitignored folder: Python
+# falls back to the current directory when the system temp is unusable, which
+# once put a test session into the source tree.
+_TMP_ROOT = Path(__file__).resolve().parents[2] / ".tmp" / "tests"
+_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-e2e-", dir=_TMP_ROOT)
+
+
 @pytest.fixture(scope="module")
 def server():
     import uvicorn
 
-    os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-e2e-")
     from app.main import app
 
     config = uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning")

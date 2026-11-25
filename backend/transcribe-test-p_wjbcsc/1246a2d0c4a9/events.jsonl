@@ -1,6 +1,0 @@
-{"type": "session", "at_ms": 1, "state": "connecting"}
-{"type": "session", "at_ms": 2, "state": "live"}
-{"type": "notice", "at_ms": 0, "level": "info", "message": "Демо-режим: транскрипт сформирован mock-пайплайном. События, протокол и экспорт — настоящие."}
-{"type": "participant", "at_ms": 1, "participant": {"id": "p-agent", "display_name": "Ассистент (бот)", "role": "bot", "has_video": false, "color": "#6c8cff", "speaking": false, "face_status": "unknown", "face_confidence": null, "thumbnail": null, "joined_at_ms": 0}}
-{"type": "done", "at_ms": 8, "reason": "stopped"}
-{"type": "session", "at_ms": 9, "state": "finished"}

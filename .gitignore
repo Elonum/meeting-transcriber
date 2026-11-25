@@ -5,6 +5,10 @@ __pycache__/
 .pytest_cache/
 ._pip_debug.log
 ._wheels/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
@@ -22,8 +26,24 @@ spike/out/
 # Model weights (downloaded on demand)
 .models/
 
+# Test sessions (the tests pin .tmp/tests, this is the safety net)
+transcribe-test-*/
+transcribe-e2e-*/
+
+# Git bundles made for local backups
+*.bundle
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
 # Editors / OS
 .vscode/
 .idea/
+.vs/
 Thumbs.db
 .DS_Store

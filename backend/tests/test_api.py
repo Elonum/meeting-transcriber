@@ -10,10 +10,16 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
-os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-test-")
+# Keep generated sessions inside the repository's gitignored folder: Python
+# falls back to the current directory when the system temp is unusable, which
+# once put a test session into the source tree.
+_TMP_ROOT = Path(__file__).resolve().parents[2] / ".tmp" / "tests"
+_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ["TRANSCRIBE_DATA_DIR"] = tempfile.mkdtemp(prefix="transcribe-test-", dir=_TMP_ROOT)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
