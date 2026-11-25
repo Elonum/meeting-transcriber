@@ -100,7 +100,7 @@ export function NewSessionForm({ busy, onCreate }: NewSessionFormProps) {
           <input
             type="text"
             autoComplete="off"
-            placeholder="например, wniols5t"
+            placeholder="например, a1b2c3d4"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
           />

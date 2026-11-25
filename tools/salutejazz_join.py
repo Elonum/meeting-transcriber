@@ -4,7 +4,7 @@ Written for the case where the lobby accepts the name and password but the room
 never produces media: the client logs everything to the console, and those lines
 say exactly which step refused (wrong password, no host, no devices, policy).
 
-    .venv\\Scripts\\python.exe tools\\salutejazz_join.py --room 71qmtd --password b42xdmkj
+    .venv\\Scripts\\python.exe tools\\salutejazz_join.py --room xxxxxx --password a1b2c3d4
 
 Everything is written to .artifacts/salutejazz-join.json: console lines, failed
 requests, final URL, visible text.

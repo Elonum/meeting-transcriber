@@ -24,7 +24,7 @@ OUT = Path(__file__).resolve().parents[1] / ".artifacts"
 
 def create_session() -> str:
     payload = {
-        "meeting_url": "https://salutejazz.ru/calls/pz1mhy?psw=OAQMDB0IFkMdFAsaQhwBUBIeFg",
+        "meeting_url": "https://salutejazz.ru/calls/xxxxxx?psw=AAAAAAAAAAAAAAAA",
         "title": "Еженедельная синхронизация",
         "pipeline": "mock",
         "speed": 6,

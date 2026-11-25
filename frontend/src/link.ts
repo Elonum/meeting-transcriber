@@ -1,16 +1,16 @@
 /**
  * SaluteJazz gives the organiser three things:
  *
- *   Адрес видеовстречи: https://salutejazz.ru/calls/pz1mhy?psw=OAQMDB0IFkMdFAsaQhwBUBIeFg
- *   Код видеовстречи:   pz1mhy@salutejazz.ru
- *   Пароль:             wniols5t
+ *   Адрес видеовстречи: https://salutejazz.ru/calls/xxxxxx?psw=<зашифрованный пароль>
+ *   Код видеовстречи:   xxxxxx@salutejazz.ru
+ *   Пароль:             a1b2c3d4
  *
  * The password usually travels inside the link (encrypted as `psw`), so the form
  * only needs the address. The code is derived, not typed.
  */
 
 export interface MeetingLink {
-  /** Six-character room code, e.g. "pz1mhy". */
+  /** Six-character room code, e.g. "abc123". */
   code: string | null
   /** The link already carries ?psw=, so no password has to be entered. */
   hasPassword: boolean
