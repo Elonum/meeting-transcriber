@@ -8,15 +8,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from . import protocol as p
 from .asr import ASREvent, ParticipantASR, get_runner
 from .capture import BrowserAgent
 from .faces import make_detector
+from .recording import SessionRecorder
 from .session import Emitter
 
 log = logging.getLogger(__name__)
+
+
+def recording_enabled() -> bool:
+    """Recording is on by default; ``TRANSCRIBE_RECORD=0`` turns it off."""
+    return os.environ.get("TRANSCRIBE_RECORD", "1").strip().lower() not in {"0", "false", "no"}
 
 
 class JazzPipeline:
@@ -57,6 +64,7 @@ class JazzPipeline:
         self._face_tasks: list[asyncio.Task[None]] = []
         self._emit: Emitter | None = None
         self._index = 0
+        self.recorder: SessionRecorder | None = None
         self._stats = {"chunks": 0, "bytes": 0, "finals": 0, "partials": 0, "faces": 0}
 
     # -- lifecycle -----------------------------------------------------------
@@ -67,6 +75,8 @@ class JazzPipeline:
 
         def at() -> int:
             return p.now_ms() - started
+
+        self._start_recording()
 
         await emit(p.ev_notice(at(), "Запускаю браузер и подключаюсь к встрече…"))
         await emit(
@@ -135,6 +145,16 @@ class JazzPipeline:
             await asyncio.gather(reader, *self._face_tasks, return_exceptions=True)
             await self._flush(at)
             await self.agent.close()
+            tracks, recorded_bytes = self._stop_recording()
+            if tracks:
+                await emit(
+                    p.ev_notice(
+                        at(),
+                        "Записано аудио: {tracks} дорожек, {size:.1f} МБ.".format(
+                            tracks=tracks, size=recorded_bytes / 1_000_000
+                        ),
+                    )
+                )
             await emit(
                 p.ev_notice(
                     at(),
@@ -155,8 +175,34 @@ class JazzPipeline:
             await self._publish(track_id, events, at)
 
     def set_artifacts_dir(self, path: Any) -> None:
-        """Where to drop diagnostic screenshots (used by the API layer)."""
+        """Where to drop diagnostic screenshots and recorded audio (set by the API)."""
         self._artifacts_dir = path
+
+    def _start_recording(self) -> None:
+        directory = getattr(self, "_artifacts_dir", None)
+        if directory is None or not recording_enabled():
+            if not recording_enabled():
+                log.info("recording: disabled by TRANSCRIBE_RECORD")
+            return
+        try:
+            self.recorder = SessionRecorder(directory / "audio")
+            log.info("recording: writing to %s", directory / "audio")
+        except Exception:  # noqa: BLE001 - a full disk must not stop the meeting
+            log.exception("recording: cannot start")
+            self.recorder = None
+
+    def _stop_recording(self) -> tuple[int, int]:
+        """Close the files and report how many tracks and bytes were written."""
+        if self.recorder is None:
+            return 0, 0
+        try:
+            manifest = self.recorder.manifest()
+            total = self.recorder.total_bytes
+        except Exception:  # noqa: BLE001
+            manifest, total = [], 0
+        self.recorder.close()
+        self.recorder = None
+        return len(manifest), total
 
     async def _screenshot(self, at: Any, reason: str) -> str | None:
         """Save what the page looked like — the fastest way to explain a failed join."""
@@ -182,6 +228,8 @@ class JazzPipeline:
                 await self._register_track(chunk.track_id, chunk.participant_name)
 
             asr = self._asr[chunk.track_id]
+            if self.recorder is not None:
+                self.recorder.add(self._participants[chunk.track_id], chunk.pcm)
             try:
                 events = await asyncio.to_thread(asr.push, chunk.pcm)
             except Exception:  # noqa: BLE001 - one bad chunk must not kill the meeting

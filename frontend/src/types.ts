@@ -6,6 +6,12 @@ export type SessionState =
   | 'finished'
   | 'failed'
 
+export interface AudioTrack {
+  participant_id: string
+  file: string
+  duration_s: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -19,6 +25,10 @@ export interface SessionInfo {
   duration_min: number | null
   participants_count: number
   segments_count: number
+  /** Present on the detail endpoint: recorded WAV per participant. */
+  audio?: AudioTrack[]
+  /** Present in search results: an excerpt around the match. */
+  snippet?: string | null
 }
 
 export type FaceStatus = 'unknown' | 'detected' | 'none' | 'frame'

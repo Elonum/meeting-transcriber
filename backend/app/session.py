@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import shutil
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -133,6 +134,34 @@ class Session:
         items = [s for s in self.segments.values() if s.get("final")]
         items.sort(key=lambda s: (s["start_ms"], s["id"]))
         return items
+
+    def matches(self, query: str) -> bool:
+        """True when the query appears in the title, link, participants or speech."""
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        if needle in self.title.lower() or needle in self.meeting_url.lower():
+            return True
+        if any(needle in part["display_name"].lower() for part in self.participants.values()):
+            return True
+        return any(needle in segment["text"].lower() for segment in self.segments.values())
+
+    def snippet(self, query: str, *, radius: int = 48) -> str | None:
+        """A short excerpt around the first match, for the history list."""
+        needle = query.strip().lower()
+        if not needle:
+            return None
+        for segment in self.final_segments():
+            text = segment["text"]
+            index = text.lower().find(needle)
+            if index < 0:
+                continue
+            start = max(0, index - radius)
+            end = min(len(text), index + len(needle) + radius)
+            prefix = "…" if start else ""
+            suffix = "…" if end < len(text) else ""
+            return f"{prefix}{text[start:end].strip()}{suffix}"
+        return None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -272,6 +301,30 @@ class SessionManager:
 
     def all(self) -> list[Session]:
         return sorted(self.sessions.values(), key=lambda s: s.created_at_ms, reverse=True)
+
+    def search(self, query: str) -> list[Session]:
+        needle = query.strip()
+        if not needle:
+            return self.all()
+        return [session for session in self.all() if session.matches(needle)]
+
+    async def delete(self, session_id: str) -> bool:
+        """Stop the session if needed and remove everything it wrote to disk."""
+        session = self.sessions.pop(session_id, None)
+        if session is None:
+            return False
+        try:
+            await session.stop()
+        except Exception:  # noqa: BLE001 - deleting must not fail because of a task
+            log.exception("delete: could not stop session %s", session_id)
+        # Defence in depth: only remove a directory that is really inside data_dir.
+        target = session.dir.resolve()
+        root = self.data_dir.resolve()
+        if target.parent != root:
+            log.error("delete: refusing to remove %s (outside %s)", target, root)
+            return True
+        shutil.rmtree(target, ignore_errors=True)
+        return True
 
     def due_scheduled(self) -> list[Session]:
         """Sessions booked for the future that must be re-armed after a restart."""

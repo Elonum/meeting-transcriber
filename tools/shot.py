@@ -67,9 +67,20 @@ def main() -> int:
         page.wait_for_timeout(5000)
         page.screenshot(path=str(OUT / "ui-3-transcript.png"))
 
+        # Light theme, same session.
+        page.click(".theme-toggle")
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(OUT / "ui-5-light.png"))
+        page.click(".theme-toggle")
+        page.wait_for_timeout(300)
+
         page.set_viewport_size({"width": 760, "height": 1000})
         page.wait_for_timeout(500)
         page.screenshot(path=str(OUT / "ui-4-narrow.png"), full_page=True)
+
+        page.set_viewport_size({"width": 420, "height": 900})
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(OUT / "ui-6-phone.png"), full_page=True)
 
         browser.close()
 

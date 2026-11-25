@@ -3,11 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%236c8cff'/%3E%3Cpath d='M8 12h16M16 12v12' stroke='%230a0c11' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E"
     />
-    <title>Transcribe — онлайн-транскрибация встреч Jazz</title>
+    <title>Transcribe — протокол встречи SaluteJazz</title>
+    <script>
+      // Apply the theme before the first paint: React would flash dark on a light
+      // screen. Kept in sync with src/theme.ts (same storage key and default).
+      (function () {
+        try {
+          var saved = localStorage.getItem('transcribe.theme')
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch (error) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -160,6 +160,9 @@ def main() -> int:
         ok = status == 200 and all(needle in body for needle in needles) and len(body) > 100
         record(f"экспорт {fmt.upper()}", ok, f"{len(body)} bytes, disposition={'yes' if 'content-disposition' in headers else 'no'}")
 
+    status, body, _headers = call(base, f"/api/sessions/{session_id}/export/zip")
+    record("экспорт ZIP (всё разом)", status == 200 and body[:2] == b"PK", f"{len(body)} bytes")
+
     # 5. event log (audit trail) ---------------------------------------------
     status, body, _ = call(base, f"/api/sessions/{session_id}/log")
     lines = [line for line in body.decode("utf-8", "replace").splitlines() if line.strip()]
@@ -240,6 +243,12 @@ def main() -> int:
             "лицо участника найдено",
             any(p["face_status"] in ("detected", "frame") for p in participants),
             ", ".join(sorted({p["face_status"] for p in participants})),
+        )
+        recorded = payload.get("session", {}).get("audio") or []
+        record(
+            "аудио записано",
+            len(recorded) >= 1,
+            ", ".join(f"{item['file']} {item['duration_s']}s" for item in recorded) or "нет файлов",
         )
 
     return finish(base)

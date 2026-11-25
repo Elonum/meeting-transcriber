@@ -1,37 +1,55 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createSession, listSessions, stopSession } from './api'
+import { createSession, deleteSession, listSessions, stopSession } from './api'
 import type { CreateSessionPayload, SessionInfo } from './types'
 import { useSessionStream } from './useSessionStream'
 import { formatDuration, useElapsed } from './useElapsed'
+import { useTheme } from './theme'
 import { roomLabel } from './link'
 import { stateLabel } from './format'
 import { NewSessionForm } from './components/NewSessionForm'
 import { SessionList } from './components/SessionList'
 import { ExportMenu } from './components/ExportMenu'
+import { ThemeToggle } from './components/ThemeToggle'
 import { Scene } from './components/Scene'
 import { Transcript } from './components/Transcript'
+
+const SEARCH_DEBOUNCE_MS = 250
 
 function sessionFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('session')
 }
 
 export default function App() {
+  const { theme, toggle } = useTheme()
+
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [activeId, setActiveId] = useState<string | null>(sessionFromUrl)
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [searching, setSearching] = useState(false)
 
   const stream = useSessionStream(activeId)
 
+  // Typing in the history search should not fire a request per keystroke.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [query])
+
   const refresh = useCallback(async () => {
+    setSearching(true)
     try {
-      const { sessions: list } = await listSessions()
+      const { sessions: list } = await listSessions(debouncedQuery)
       setSessions(list)
       setLoadError(null)
     } catch (cause) {
       setLoadError(cause instanceof Error ? cause.message : 'Сервер недоступен')
+    } finally {
+      setSearching(false)
     }
-  }, [])
+  }, [debouncedQuery])
 
   useEffect(() => {
     void refresh()
@@ -65,6 +83,7 @@ export default function App() {
     try {
       const created = await createSession(payload)
       setActiveId(created.id)
+      setQuery('')
       await refresh()
     } finally {
       setBusy(false)
@@ -74,6 +93,13 @@ export default function App() {
   const onStop = async () => {
     if (!active) return
     await stopSession(active.id)
+    await refresh()
+  }
+
+  const onDelete = async (id: string) => {
+    await deleteSession(id)
+    setSessions((current) => current.filter((session) => session.id !== id))
+    if (activeId === id) setActiveId(null)
     await refresh()
   }
 
@@ -89,10 +115,19 @@ export default function App() {
             <strong>Transcribe</strong>
             <small>протокол встречи SaluteJazz</small>
           </div>
+          <ThemeToggle theme={theme} onToggle={toggle} />
         </header>
 
         <NewSessionForm busy={busy} onCreate={onCreate} />
-        <SessionList sessions={sessions} activeId={activeId} onSelect={setActiveId} />
+        <SessionList
+          sessions={sessions}
+          activeId={activeId}
+          query={query}
+          searching={searching}
+          onSelect={setActiveId}
+          onQueryChange={setQuery}
+          onDelete={onDelete}
+        />
 
         <footer className="sidebar__foot">
           Речь распознаётся локально · звук не покидает этот компьютер
@@ -119,8 +154,8 @@ export default function App() {
                 иначе платформа не передаёт звук.
               </li>
               <li>
-                <strong>Протокол.</strong> Реплики идут в реальном времени; по окончании скачайте SRT,
-                Markdown или JSON.
+                <strong>Материалы.</strong> Реплики идут в реальном времени, аудио пишется рядом; в
+                конце — один архив со всем.
               </li>
             </ol>
           </div>
@@ -141,7 +176,7 @@ export default function App() {
                   <span className={`dot dot--${active.state === 'live' ? 'live' : 'idle'}`} />
                   {stateLabel(active.state)}
                 </span>
-                <ExportMenu session={active} />
+                <ExportMenu session={active} participants={stream.participants} />
                 {(live || waiting) && (
                   <button type="button" className="danger" onClick={onStop}>
                     {waiting ? 'Отменить' : 'Остановить'}

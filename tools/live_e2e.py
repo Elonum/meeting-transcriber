@@ -121,10 +121,27 @@ def main() -> int:
         print("  participant:", part["display_name"], part["face_status"])
     for segment in segments:
         print(f"  [{segment['start_ms']}ms] {segment['participant_id']}: {segment['text']}")
+
+    # Recording and the all-in-one archive are part of the deliverable.
+    detail = get(f"/api/sessions/{session['id']}")
+    audio = detail["session"].get("audio") or []
+    print("\nrecorded audio:", [(item["file"], f"{item['duration_s']}s") for item in audio])
+    bundle_ok = False
+    if segments:
+        with urllib.request.urlopen(BASE + f"/api/sessions/{session['id']}/export/zip", timeout=120) as response:
+            archive_bytes = response.read()
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+            names = archive.namelist()
+        bundle_ok = "transcript.srt" in names and (not audio or any(n.startswith("audio/") for n in names))
+        print("bundle:", len(archive_bytes), "bytes,", len(names), "files, audio included:", bundle_ok)
+
     text = " ".join(segment["text"] for segment in segments).lower()
     ok = any(word in text for word in ("коллеги", "планёрк", "транскрибац", "дмитрий"))
-    print("\nRESULT:", "transcript captured" if ok else "no expected words")
-    return 0 if ok else 1
+    print("\nRESULT:", "transcript captured" if ok else "no expected words", "| audio:", bool(audio), "| zip:", bundle_ok)
+    return 0 if ok and bundle_ok else 1
 
 
 if __name__ == "__main__":

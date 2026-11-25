@@ -1,8 +1,8 @@
-"""Layout regression checks driven by a real browser.
+"""Layout and behaviour checks driven by a real browser.
 
-A screenshot nobody looks at proves nothing, so this script measures the DOM:
-overflow, overlaps, tile geometry, autoscroll, the download menu and the cancel
-path for a scheduled meeting. Run it after changing CSS or components.
+Measures the DOM instead of eyeballing screenshots: overflow at three widths,
+theme switching and persistence, the download menu, history search and the
+two-step delete, plus the scheduled-meeting path.
 
     .venv\\Scripts\\python.exe tools\\ui_check.py [base_url]
 
@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
@@ -31,23 +34,35 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     print(f"{'PASS' if condition else 'FAIL'}  {name}{('  — ' + detail) if detail else ''}")
 
 
-def api(path: str, payload: dict | None = None) -> dict:
+def api(path: str, payload: dict | None = None):
     request = urllib.request.Request(
         BASE + path,
         data=json.dumps(payload).encode() if payload is not None else None,
         method="POST" if payload is not None else "GET",
         headers={"Content-Type": "application/json"} if payload is not None else {},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        body = response.read()
-    return json.loads(body) if body else {}
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = response.read()
+            return response.status, json.loads(body) if body else {}
+    except urllib.error.HTTPError as error:
+        return error.code, {}
+
+
+def no_overflow(page) -> tuple[bool, str]:
+    width = page.evaluate("document.documentElement.scrollWidth")
+    window = page.evaluate("window.innerWidth")
+    return width <= window + 1, f"{width} vs {window}"
 
 
 def main() -> int:
-    # A session to look at: the same object the form produces, created via API.
-    mock = api(
+    _, mock = api(
         "/api/sessions",
         {"meeting_url": MEETING, "title": "Проверка интерфейса", "pipeline": "mock", "speed": 6},
+    )
+    _, throwaway = api(
+        "/api/sessions",
+        {"meeting_url": "https://salutejazz.ru/calls/delme1", "title": "Удаляемая встреча", "pipeline": "mock", "speed": 30},
     )
 
     with sync_playwright() as playwright:
@@ -63,13 +78,32 @@ def main() -> int:
         page.goto(BASE, wait_until="networkidle")
         check("welcome heading", page.locator(".welcome h1").is_visible())
         check("three guidance steps", page.locator(".steps li").count() == 3)
-        check(
-            "no horizontal overflow (desktop)",
-            page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
-            page.evaluate("`${document.documentElement.scrollWidth} vs ${window.innerWidth}`"),
-        )
+        ok, detail = no_overflow(page)
+        check("no horizontal overflow (desktop)", ok, detail)
         check("no pipeline switch left in the form", page.locator("select").count() == 0)
         check("field named after the meeting address", "Адрес видеовстречи" in page.locator(".form").inner_text())
+
+        # -- theme -----------------------------------------------------------
+        before = page.evaluate("document.documentElement.dataset.theme")
+        page.click(".theme-toggle")
+        page.wait_for_timeout(250)
+        after = page.evaluate("document.documentElement.dataset.theme")
+        check("theme toggle flips the theme", before != after, f"{before} -> {after}")
+        check(
+            "theme is persisted",
+            page.evaluate("localStorage.getItem('transcribe.theme')") == after,
+            after,
+        )
+        background = page.evaluate("getComputedStyle(document.body).backgroundColor")
+        expected = "rgb(244, 246, 251)" if after == "light" else "rgb(10, 12, 17)"
+        check("theme paints the page", background == expected, f"{background}")
+
+        page.reload(wait_until="networkidle")
+        check(
+            "theme survives a reload",
+            page.evaluate("document.documentElement.dataset.theme") == after,
+        )
+        page.click(".theme-toggle")  # back to the previous theme for screenshots
 
         # -- live session through the shareable link -------------------------
         page.goto(f"{BASE}/?session={mock['id']}", wait_until="networkidle")
@@ -89,7 +123,6 @@ def main() -> int:
 
         faces = page.locator(".tile__badge:not(.tile__badge--muted)").count()
         check("faces are badged", faces == 3, f"{faces}")
-
         check("timer is shown", page.locator(".timer").count() == 1)
         check(
             "transcript autoscrolls",
@@ -109,32 +142,71 @@ def main() -> int:
 
         # -- download menu ---------------------------------------------------
         page.click(".menu button")
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(400)
         items = page.locator(".menu__panel .menu__item").count()
-        check("download menu lists every format", items == 6, f"{items} items")
+        check("download menu offers archive plus formats", items >= 7, f"{items} items")
         hrefs = page.eval_on_selector_all(".menu__item", "els => els.map(e => e.getAttribute('href'))")
-        check("menu links point at exports", all(h and "/export/" in h for h in hrefs[:5]), str(hrefs[:2]))
+        check("menu has a ZIP bundle", any(h and h.endswith("/export/zip") for h in hrefs), str(hrefs[:2]))
+        check("menu links point at exports", all(h and "/export/" in h for h in hrefs[:6]), str(hrefs[:2]))
         page.keyboard.press("Escape")
 
-        # -- search ----------------------------------------------------------
+        # -- search inside the transcript ------------------------------------
         page.fill(".search", "Jazz")
         page.wait_for_timeout(300)
-        check("search filters the feed", page.locator(".search__count").count() == 1)
+        check("transcript search filters", page.locator(".search__count").count() == 1)
         page.fill(".search", "")
 
-        # -- narrow viewport -------------------------------------------------
-        page.set_viewport_size({"width": 760, "height": 1000})
-        page.wait_for_timeout(400)
+        # -- responsive ------------------------------------------------------
+        for width in (1024, 760, 420):
+            page.set_viewport_size({"width": width, "height": 1000})
+            page.wait_for_timeout(350)
+            ok, detail = no_overflow(page)
+            check(f"no horizontal overflow ({width}px)", ok, detail)
+
+        page.set_viewport_size({"width": 420, "height": 900})
+        page.wait_for_timeout(300)
         check(
-            "no horizontal overflow (narrow)",
-            page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"),
-            page.evaluate("`${document.documentElement.scrollWidth} vs ${window.innerWidth}`"),
+            "stage scrolls sideways on a phone",
+            page.evaluate(
+                "(() => { const t = document.querySelector('.tiles');"
+                " return t.scrollWidth >= t.clientWidth; })()"
+            ),
         )
+        check(
+            "header stays visible while scrolling",
+            page.evaluate("getComputedStyle(document.querySelector('.topbar')).position") == "sticky",
+        )
+
         page.set_viewport_size({"width": 1500, "height": 940})
 
-        # -- scheduled session -----------------------------------------------
+        # -- history search and delete ---------------------------------------
+        page.goto(BASE, wait_until="networkidle")
+        page.fill(".history__search", "Удаляемая")
+        page.wait_for_timeout(700)
+        rows = page.locator(".history__row").count()
+        _, found = api("/api/sessions?q=" + urllib.parse.quote("Удаляемая"))
+        check(
+            "history search matches the API",
+            rows == found.get("total") and rows >= 1,
+            f"{rows} rows vs {found.get('total')}",
+        )
+
+        row = page.locator(".history__row", has_text="Удаляемая").first
+        row.locator(".history__delete").click()
+        page.wait_for_timeout(200)
+        check("delete asks for confirmation", row.locator(".history__danger").count() == 1)
+        row.locator(".history__danger").click()
+        page.wait_for_timeout(1200)
+        status, _ = api(f"/api/sessions/{throwaway['id']}")
+        check("delete removes the meeting", status == 404, f"HTTP {status}")
+
+        page.fill(".history__search", "")
+        page.wait_for_timeout(600)
+        check("clearing the search restores the list", page.locator(".history__row").count() >= 1)
+
+        # -- scheduled session ----------------------------------------------
         start_at = (datetime.now() + timedelta(minutes=30)).isoformat()
-        scheduled = api(
+        _, scheduled = api(
             "/api/sessions",
             {"meeting_url": MEETING, "title": "Запланированная", "pipeline": "mock", "start_at": start_at},
         )
