@@ -1,7 +1,36 @@
 import type { CreateSessionPayload, SessionInfo } from './types'
 
+/** Thrown when the service is protected and the browser has no valid cookie. */
+export class AuthRequiredError extends Error {
+  constructor() {
+    super('нужен токен доступа')
+    this.name = 'AuthRequiredError'
+  }
+}
+
+export interface AuthStatus {
+  required: boolean
+  authorised: boolean
+}
+
+export function getAuthStatus(): Promise<AuthStatus> {
+  return jsonFetch('/api/auth')
+}
+
+export async function login(token: string): Promise<AuthStatus> {
+  const response = await fetch('/api/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (response.status === 401) throw new Error('Неверный токен')
+  if (!response.ok) throw new Error(`Не удалось войти (HTTP ${response.status})`)
+  return (await response.json()) as AuthStatus
+}
+
 async function jsonFetch<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
+  if (response.status === 401) throw new AuthRequiredError()
   if (!response.ok) {
     let detail = `HTTP ${response.status}`
     try {

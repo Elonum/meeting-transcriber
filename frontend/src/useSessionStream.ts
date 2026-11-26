@@ -10,6 +10,8 @@ interface StreamState {
   connected: boolean
   doneReason: string | null
   gone: boolean
+  /** The stream was refused: the server wants a token. */
+  needAuth: boolean
 }
 
 const initialState: StreamState = {
@@ -21,18 +23,21 @@ const initialState: StreamState = {
   connected: false,
   doneReason: null,
   gone: false,
+  needAuth: false,
 }
 
 type Action =
   | { type: 'reset' }
   | { type: 'connected'; value: boolean }
   | { type: 'gone' }
+  | { type: 'need-auth' }
   | { type: 'event'; event: ServerEvent }
 
 function reducer(state: StreamState, action: Action): StreamState {
   if (action.type === 'reset') return { ...initialState }
   if (action.type === 'connected') return { ...state, connected: action.value }
   if (action.type === 'gone') return { ...state, gone: true, connected: false }
+  if (action.type === 'need-auth') return { ...state, needAuth: true, connected: false }
 
   const event = action.event
   switch (event.type) {
@@ -46,6 +51,7 @@ function reducer(state: StreamState, action: Action): StreamState {
         connected: true,
         doneReason: null,
         gone: false,
+        needAuth: false,
       }
     case 'session':
       if (!state.session) return state
@@ -139,6 +145,8 @@ export interface SessionStream {
   finals: number
   /** The session disappeared on the server (deleted elsewhere). */
   gone: boolean
+  /** The stream was refused because the server wants a token. */
+  needAuth: boolean
 }
 
 /** Subscribes to one session's event stream and folds it into view state. */
@@ -178,6 +186,10 @@ export function useSessionStream(sessionId: string | null): SessionStream {
         // forever would spin against a meeting that no longer exists.
         if (event.code === 4404) {
           dispatch({ type: 'gone' })
+          return
+        }
+        if (event.code === 4401) {
+          dispatch({ type: 'need-auth' })
           return
         }
         const finished = latest.current.session?.state === 'finished' || latest.current.session?.state === 'failed'
@@ -222,5 +234,6 @@ export function useSessionStream(sessionId: string | null): SessionStream {
     doneReason: state.doneReason,
     finals: Object.keys(state.finals).length,
     gone: state.gone,
+    needAuth: state.needAuth,
   }
 }

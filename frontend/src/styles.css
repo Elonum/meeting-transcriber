@@ -126,6 +126,48 @@ select {
   outline-offset: 2px;
 }
 
+/* ------------------------------------------------------------------ gate -- */
+
+.gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--space-5);
+}
+
+.gate__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(420px, 100%);
+  padding: var(--space-6);
+}
+
+.gate__card h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.2px;
+}
+
+.gate__card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.gate__card code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12.5px;
+}
+
+.gate__card .brand__mark {
+  align-self: flex-start;
+}
+
 /* ---------------------------------------------------------------- layout -- */
 
 .app {

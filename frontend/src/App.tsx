@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createSession, deleteSession, listSessions, stopSession } from './api'
+import {
+  AuthRequiredError,
+  createSession,
+  deleteSession,
+  getAuthStatus,
+  listSessions,
+  login,
+  stopSession,
+} from './api'
+import type { AuthStatus } from './api'
 import type { CreateSessionPayload, SessionInfo } from './types'
 import { useSessionStream } from './useSessionStream'
 import { formatDuration, useElapsed } from './useElapsed'
@@ -12,6 +21,7 @@ import { ExportMenu } from './components/ExportMenu'
 import { ThemeToggle } from './components/ThemeToggle'
 import { Scene } from './components/Scene'
 import { Transcript } from './components/Transcript'
+import { TokenGate } from './components/TokenGate'
 
 const SEARCH_DEBOUNCE_MS = 250
 
@@ -30,8 +40,25 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  const [auth, setAuth] = useState<AuthStatus | null>(null)
 
   const stream = useSessionStream(activeId)
+
+  // A protected server answers 401 until the token is exchanged for a cookie.
+  useEffect(() => {
+    getAuthStatus()
+      .then(setAuth)
+      .catch(() => setAuth({ required: false, authorised: true }))
+  }, [])
+
+  const needsLogin = Boolean(auth?.required && !auth.authorised)
+
+  const unlock = async (token: string) => {
+    const status = await login(token)
+    setAuth(status)
+    setLoadError(null)
+    await refresh()
+  }
 
   // Typing in the history search should not fire a request per keystroke.
   useEffect(() => {
@@ -47,6 +74,10 @@ export default function App() {
       setSessionsTotal(total)
       setLoadError(null)
     } catch (cause) {
+      if (cause instanceof AuthRequiredError) {
+        setAuth({ required: true, authorised: false })
+        return
+      }
       setLoadError(cause instanceof Error ? cause.message : 'Сервер недоступен')
     } finally {
       setSearching(false)
@@ -113,8 +144,17 @@ export default function App() {
     await refresh()
   }
 
+  // The stream knows before the next poll that it was refused (4401).
+  useEffect(() => {
+    if (stream.needAuth) setAuth({ required: true, authorised: false })
+  }, [stream.needAuth])
+
   const live = active?.state === 'live' || active?.state === 'connecting'
   const waiting = active?.state === 'scheduled'
+
+  if (needsLogin) {
+    return <TokenGate onSubmit={unlock} />
+  }
 
   return (
     <div className="app">

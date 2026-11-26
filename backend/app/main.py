@@ -18,6 +18,7 @@ every mutation has an idempotent, auditable entry point.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -29,13 +30,14 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote, urlparse
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 from starlette.background import BackgroundTask
 
+from . import auth, retention
 from . import export as exporters
 from . import protocol as p
 from .bundle import BUNDLE_NAME, build_bundle
@@ -98,7 +100,15 @@ async def lifespan(_: FastAPI):
         )
         await session.start(speed=float(session.options.get("speed", 1.0)))
         log.info("re-armed scheduled session %s", session.id)
-    yield
+    if retention.retention_days():
+        log.info("retention: keeping meetings for %d day(s)", retention.retention_days())
+    sweeper = asyncio.create_task(retention.run_forever(manager))
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
 
 
 app = FastAPI(
@@ -106,6 +116,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.add_middleware(auth.TokenMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -208,6 +219,8 @@ async def health() -> dict:
         "data_dir": str(DATA_DIR),
         "static_ready": (STATIC_DIR / "index.html").is_file(),
         "log_file": str(LOG_FILE),
+        "auth_required": auth.auth_enabled(),
+        "retention_days": retention.retention_days(),
     }
 
 
@@ -223,6 +236,18 @@ async def logs(lines: int = 200) -> Response:
         handle.seek(max(0, size - 200_000))
         tail = handle.read().decode("utf-8", "replace")
     return Response(content="\n".join(tail.splitlines()[-limit:]), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/auth")
+async def auth_status(request: Request) -> dict:
+    """Tells the interface whether a token is needed and whether it has one."""
+    return auth.status(request)
+
+
+@app.post("/api/auth")
+async def auth_login(payload: auth.AuthRequest, response: Response) -> dict:
+    """Exchange the token for an HttpOnly cookie; a wrong token is a plain 401."""
+    return auth.login(payload, response)
 
 
 @app.get("/api/sessions")
@@ -419,6 +444,9 @@ def _disposition(title: str, fmt: str) -> str:
 
 @app.websocket("/events/{session_id}")
 async def events(socket: WebSocket, session_id: str) -> None:
+    if not auth.is_authorised(socket):  # type: ignore[arg-type]
+        await socket.close(code=4401)
+        return
     session = manager.get(session_id)
     if session is None:
         await socket.close(code=4404)
