@@ -199,3 +199,37 @@ def test_deleting_closes_open_streams(client: TestClient) -> None:
                 socket.receive_json()
 
     assert closed.value.code == 4404
+
+
+def test_a_withdrawn_participant_leaves_the_archive(client: TestClient) -> None:
+    """A placeholder that never spoke is removed; one with lines is kept."""
+    session_id = client.post(
+        "/api/sessions", json={"meeting_url": MEETING, "speed": 40}
+    ).json()["id"]
+
+    from app import protocol as p
+    from app.main import manager
+
+    session = manager.get(session_id)
+    assert session is not None
+    session.apply(p.ev_participant(0, p.new_participant("p-9", "Участник 9")))
+    session.apply(p.ev_participant(0, p.new_participant("p-8", "Участник 8")))
+    session.apply(
+        p.ev_segment(
+            0,
+            {
+                "id": "p-8-0",
+                "participant_id": "p-8",
+                "start_ms": 0,
+                "end_ms": 1000,
+                "text": "привет",
+                "final": True,
+            },
+        )
+    )
+
+    session.apply(p.ev_participant_removed(0, "p-9"))
+    session.apply(p.ev_participant_removed(0, "p-8"))
+
+    assert "p-9" not in session.participants, "an empty record must disappear"
+    assert "p-8" in session.participants, "a record with lines must stay attributed"

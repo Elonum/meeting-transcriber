@@ -91,7 +91,9 @@
         // Participants start talking a few seconds after the page loads, so the
         // agent has time to join — like a real call, and it keeps the fixture
         // from being clipped at the start.
-        const startDelay = Number(params.get('startDelay') || '4');
+        // A per-participant delay (`delay2=20`) simulates somebody joining the call
+  // later, which is what the timecode ordering has to survive.
+  const startDelay = Number(params.get('delay' + index) || params.get('startDelay') || '4');
         if (source.url) {
           const buffer = await (await fetch(source.url)).arrayBuffer();
           const decoded = await ctx.decodeAudioData(buffer);

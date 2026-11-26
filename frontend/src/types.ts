@@ -73,6 +73,7 @@ export type ServerEvent =
   | { type: 'session'; at_ms: number; state: SessionState; error?: string }
   | { type: 'participant'; at_ms: number; participant: Participant }
   | { type: 'speech'; at_ms: number; participant_id: string; speaking: boolean }
+  | { type: 'participant_removed'; at_ms: number; participant_id: string }
   | { type: 'segment'; at_ms: number; segment: Segment }
   | { type: 'face'; at_ms: number; participant_id: string; status: FaceStatus; confidence?: number; thumbnail?: string }
   | { type: 'notice'; at_ms: number; level: string; message: string }

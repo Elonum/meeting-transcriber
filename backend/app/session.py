@@ -119,6 +119,12 @@ class Session:
             part = event["participant"]
             merged = {**self.participants.get(part["id"], {}), **part}
             self.participants[part["id"]] = merged
+        elif kind == "participant_removed":
+            # Only a record that never produced a line may disappear: otherwise
+            # its lines would point at nobody.
+            participant_id = event["participant_id"]
+            if not any(segment.get("participant_id") == participant_id for segment in self.segments.values()):
+                self.participants.pop(participant_id, None)
         elif kind == "speech":
             part = self.participants.get(event["participant_id"])
             if part is not None:

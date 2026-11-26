@@ -536,6 +536,9 @@ class TrackInfo:
     label: str
     video_track_id: str | None = None
     present: bool = True
+    #: True when the name is our own fallback, not something the room shows.
+    #: The product's own "Участник 3" is a real name and must not be rewritten.
+    invented: bool = False
 
 
 @dataclass(slots=True)
@@ -851,21 +854,47 @@ class BrowserAgent:
 
         updates: list[ParticipantUpdate] = []
 
-        used = {info.name for info in self._tracks.values() if not is_placeholder(info.name)}
+        # Only people who are here right now own their name. A participant who
+        # left must not keep their name reserved — that is exactly how a
+        # returning "Адель" used to become "Участник 3".
+        bound = {
+            info.name
+            for info in self._tracks.values()
+            if info.present and not info.invented
+        }
+        free = [name for name in clean if name not in bound]
+
+        # 1. Tracks that have no real name yet take the free names, in join order.
         for info in self._tracks.values():
-            if not is_placeholder(info.name):
+            if not info.present or not info.invented:
                 continue
-            candidate = next((name for name in clean if name not in used), None)
-            if candidate is None:
+            if not free:
                 break
+            candidate = free.pop(0)
             info.name = candidate
-            info.present = True
-            used.add(candidate)
+            info.invented = False
+            bound.add(candidate)
             updates.append(ParticipantUpdate(track_id=info.track_id, name=candidate, present=True))
 
         if not self._names_available:
             # Without a list there is nothing to compare against.
             return updates
+
+        # 2. A rename in place: exactly one present track lost its name and
+        #    exactly one name appeared in the same poll — that is one person
+        #    renamed, not one leaving and another arriving.
+        missing = [
+            info
+            for info in self._tracks.values()
+            if info.present and not info.invented and info.name not in clean
+        ]
+        if len(missing) == 1 and len(free) == 1:
+            info = missing[0]
+            bound.discard(info.name)
+            info.name = free.pop(0)
+            bound.add(info.name)
+            self._strikes.pop(info.track_id, None)
+            updates.append(ParticipantUpdate(track_id=info.track_id, name=info.name))
 
         listed = set(clean)
         for info in self._tracks.values():
@@ -1001,29 +1030,45 @@ class BrowserAgent:
                 existing.video_track_id = video
                 log.info("agent: video track for %s is now known", existing.name)
             late_name = str(data.get("name") or "").strip()
-            if late_name and not is_placeholder(late_name) and late_name != existing.name:
+            # A real name from the page always wins, even when it looks like a
+            # placeholder: the product's own "Участник 3" is who this person is.
+            if late_name and late_name != existing.name and (existing.invented or not is_placeholder(late_name)):
                 log.info("agent: track %s renamed to %s", existing.track_id[:8], late_name)
                 existing.name = late_name
+                existing.invented = False
                 self._safe_put(
                     self.updates, ParticipantUpdate(track_id=existing.track_id, name=late_name)
                 )
             return
         name = (data.get("name") or "").strip()
+        invented = False
         if not name or len(name) > 60:
             # Fall back to the participant list from the room UI, in join order.
             used = {info.name for info in self._tracks.values()}
             remaining = [item for item in self._remote_names if item not in used]
-            name = remaining[0] if remaining else f"{UNNAMED_PREFIX}{len(self._tracks) + 1}"
+            invented = not remaining
+            name = remaining[0] if remaining else self._next_placeholder()
         info = TrackInfo(
             track_id=track_id,
             name=name,
             label=str(data.get("label") or ""),
             video_track_id=(str(data["videoTrackId"]) if data.get("videoTrackId") else None),
+            invented=invented,
         )
         self._tracks[track_id] = info
         self._started_s[track_id] = time.monotonic()
         log.info("agent: track %s -> %s", track_id[:8], name)
         self._safe_put(self.track_events, info)
+
+    def _next_placeholder(self) -> str:
+        """Placeholder numbers never collide, even after people come and go."""
+        numbers = [
+            int(match.group(1))
+            for info in self._tracks.values()
+            for match in [re.search(r"(\d+)$", info.name)]
+            if match
+        ]
+        return f"{UNNAMED_PREFIX}{max(numbers, default=0) + 1}"
 
     def _on_track_ended(self, source: Any, track_id: str) -> None:
         """A closed track is a clear "left" signal, earlier than the DOM list."""

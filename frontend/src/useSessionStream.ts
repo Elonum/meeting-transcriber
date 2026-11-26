@@ -70,6 +70,13 @@ function reducer(state: StreamState, action: Action): StreamState {
           },
         },
       }
+    case 'participant_removed': {
+      // An empty record that never spoke was withdrawn: the real person's
+      // record replaced it, so the spare tile must disappear too.
+      const participants = { ...state.participants }
+      delete participants[event.participant_id]
+      return { ...state, participants }
+    }
     case 'speech': {
       const participant = state.participants[event.participant_id]
       if (!participant) return state

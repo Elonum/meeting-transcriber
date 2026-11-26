@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from collections.abc import Iterable, Iterator
 from typing import Any
 
 from . import protocol as p
 from .asr import ASREvent, ParticipantASR, get_runner, prompt_from_env
-from .capture import BrowserAgent
+from .capture import UNNAMED_PREFIX, BrowserAgent
 from .errors import describe_error
 from .faces import make_detector
 from .recording import SessionRecorder
@@ -91,6 +92,18 @@ class JazzPipeline:
         self.detector = make_detector()
         self._participants: dict[str, str] = {}  # track_id -> participant_id
         self._participant_state: dict[str, dict[str, Any]] = {}  # track_id -> session dict
+        #: Participant records by display name, so somebody who leaves and comes
+        #: back under the same name keeps one transcript instead of a new tile.
+        self._by_name: dict[str, dict[str, Any]] = {}
+        #: participant_id -> the track that currently carries them.
+        self._live: dict[str, str] = {}
+        #: Session-clock value of each track's first sample, for the timecodes.
+        self._track_start_ms: dict[str, int] = {}
+        #: Participants who already produced a line; their record cannot be
+        #: re-pointed to another id without losing the line.
+        self._spoken: set[str] = set()
+        #: Placeholder records to withdraw once their replacement is emitted.
+        self._pending_removal: list[str] = []
         self._asr: dict[str, ParticipantASR] = {}
         self._face_tasks: list[asyncio.Task[None]] = []
         #: Watcher per participant, so it can be stopped when that person leaves
@@ -110,16 +123,20 @@ class JazzPipeline:
     async def run(self, emit: Emitter, deadline_ms: int | None) -> None:
         self._emit = emit
         started = p.now_ms()
+        self._clock_start = started
 
         def at() -> int:
-            return p.now_ms() - started
+            # One clock for every event: notices and segments must sort together.
+            return p.now_ms() - self._clock_start
 
         self._start_recording()
 
-        await emit(p.ev_notice(at(), "Запускаю браузер и подключаюсь к встрече…"))
+        # Emitted at 0: the clock is restarted when the agent actually enters the
+        # room, so these two must not carry the browser-startup delay.
+        await emit(p.ev_notice(0, "Запускаю браузер и подключаюсь к встрече…"))
         await emit(
             p.ev_participant(
-                at(),
+                0,
                 p.new_participant("p-agent", "Ассистент", role="bot", has_video=False),
             )
         )
@@ -137,6 +154,10 @@ class JazzPipeline:
             )
             raise
 
+        # The transcript starts at 00:00 when the agent enters the room: browser
+        # startup (30-40 s) used to shift every timecode away from the meeting.
+        self._clock_start = p.now_ms()
+
         for note in self.agent.notes[-6:]:
             await emit(p.ev_notice(at(), f"Вход: {note}"))
 
@@ -152,7 +173,9 @@ class JazzPipeline:
                 )
             )
 
-        self._clock_start = started
+        # One clock for the whole session, set once when it starts: notices,
+        # participants and segments must all sort on the same timeline. Segment
+        # times are speech times, so a slow transcript still lands in order.
         reader = asyncio.create_task(self._read_audio())
         watcher = asyncio.create_task(self._participant_loop())
         lost_browser = False
@@ -272,14 +295,27 @@ class JazzPipeline:
         patch: dict[str, Any] = {"id": state["id"]}
         name = getattr(update, "name", None)
         if name and name != state.get("display_name"):
-            log.info("participant %s renamed to %s", state["id"], name)
-            state["display_name"] = name
-            patch["display_name"] = name
+            adopted = self._adopt_if_returning(update.track_id, state, name)
+            if adopted is not None:
+                state = adopted
+                patch = {"id": state["id"]}
+                for gone_id in self._pending_removal:
+                    await self._emit(
+                        p.ev_participant_removed(p.now_ms() - self._clock_start, gone_id)
+                    )
+                self._pending_removal.clear()
+                await self._emit(p.ev_participant(p.now_ms() - self._clock_start, state))
+            resolved = self._rename(state, name)
+            log.info("participant %s renamed to %s", state["id"], resolved)
+            patch["display_name"] = resolved
         present = getattr(update, "present", None)
         if present is not None and present != state.get("present", True):
             state["present"] = present
             if not present:
                 state["speaking"] = False
+                # The name is free again: a return under it is the same person,
+                # a new name is somebody else, and both are handled by _claim.
+                self._live.pop(state["id"], None)
                 # Nobody is on screen any more: stop asking for their camera.
                 watcher = self._face_by_participant.pop(state["id"], None)
                 if watcher is not None and not watcher.done():
@@ -367,25 +403,127 @@ class JazzPipeline:
                 continue
             await self._publish(chunk.track_id, events, lambda: p.now_ms() - self._clock_start)
 
+    def _claim_participant(self, name: str) -> dict[str, Any]:
+        """Find the participant for a display name, creating one when needed.
+
+        The room gives us names and nothing else, so the name *is* the identity:
+        leaving and returning under the same name continues one transcript,
+        while a new name is a new participant. Two people who choose one name
+        cannot be told apart, so the second is suffixed instead of being merged.
+        """
+        clean = (name or "").strip()
+        if not clean:
+            clean = self._next_placeholder()
+        existing = self._by_name.get(clean)
+        if existing is not None and existing["id"] not in self._live:
+            return existing
+        if existing is not None:
+            clean = self._unique_name(clean)
+        self._index += 1
+        participant = p.new_participant(f"p-{self._index}", clean, color_index=self._index)
+        self._by_name[clean] = participant
+        return participant
+
+    def _unique_name(self, base: str) -> str:
+        """Second person with the same display name gets an honest suffix."""
+        for suffix in range(2, 100):
+            candidate = f"{base} ({suffix})"
+            if candidate not in self._by_name:
+                return candidate
+        return f"{base} ({self._index + 1})"
+
+    def _next_placeholder(self) -> str:
+        """Placeholder numbers never collide, even after people come and go."""
+        numbers = [
+            int(match.group(1))
+            for name in self._by_name
+            for match in [re.search(r"(\d+)$", name)]
+            if match
+        ]
+        return f"{UNNAMED_PREFIX}{max(numbers, default=0) + 1}"
+
+    def _adopt_if_returning(
+        self, track_id: str, state: dict[str, Any], name: str
+    ) -> dict[str, Any] | None:
+        """Let a returning person take back the record they left behind.
+
+        A track is sometimes registered before the room paints its tile, so the
+        participant starts out as "Участник N" and only later learns the real
+        name. If that name belongs to somebody who has already left and the
+        placeholder never spoke, the placeholder simply makes way: otherwise the
+        archive would show two tiles for one person.
+        """
+        clean = (name or "").strip()
+        target = self._by_name.get(clean)
+        if target is None or target["id"] == state["id"]:
+            return None
+        if target["id"] in self._live or state["id"] in self._spoken:
+            return None
+
+        old_id = state["id"]
+        self._by_name.pop(str(state.get("display_name") or ""), None)
+        self._live.pop(old_id, None)
+        self._participants[track_id] = target["id"]
+        self._live[target["id"]] = track_id
+        target["present"] = True
+        self._participant_state[track_id] = target
+        asr = self._asr.get(track_id)
+        if asr is not None:
+            asr.participant_id = target["id"]
+
+        watcher = self._face_by_participant.pop(old_id, None)
+        if watcher is not None and not watcher.done():
+            watcher.cancel()
+        task = asyncio.create_task(self._face_loop(target["id"], track_id))
+        self._face_tasks.append(task)
+        self._face_by_participant[target["id"]] = task
+        # The empty placeholder must leave the archive before the real record
+        # is emitted, otherwise the meeting ends with a spare "Участник N".
+        self._pending_removal.append(old_id)
+        log.info("participant %s (%s) is back on track %s", target["id"], clean, track_id[:8])
+        return target
+
+    def _rename(self, participant: dict[str, Any], wanted: str) -> str:
+        """A person changed their display name without reconnecting."""
+        clean = (wanted or "").strip()
+        current = str(participant.get("display_name") or "")
+        if not clean or clean == current:
+            return current
+        owner = self._by_name.get(clean)
+        if owner is not None and owner is not participant:
+            # The name belongs to somebody else's record; never reuse it here,
+            # or the archive would show two people called the same.
+            clean = self._unique_name(clean)
+        if self._by_name.get(current) is participant:
+            del self._by_name[current]
+        participant["display_name"] = clean
+        self._by_name[clean] = participant
+        return clean
+
     async def _register_track(self, track_id: str, name: str) -> None:
         assert self._emit is not None
-        self._index += 1
-        participant_id = f"p-{self._index}"
-        self._participants[track_id] = participant_id
         # The agent may have learned the real name after the audio started.
         info = self.agent._tracks.get(track_id)
         resolved = (info.name if info and info.name else "") or name
+        participant = self._claim_participant(resolved)
+        participant_id = participant["id"]
+        self._participants[track_id] = participant_id
+        self._live[participant_id] = track_id
+        # The track's own clock starts at its first sample; segments are shifted
+        # by this, so a late joiner's lines are not placed at the beginning.
+        self._track_start_ms[track_id] = p.now_ms() - self._clock_start
         self._asr[track_id] = ParticipantASR(
             participant_id,
             self.runner,
             partial_interval_ms=self.partial_interval_ms,
         )
-        participant = p.new_participant(
-            participant_id, resolved or f"Участник {self._index}", color_index=self._index
-        )
-        participant["joined_at_ms"] = p.now_ms() - self._clock_start
+        now = p.now_ms() - self._clock_start
+        participant["present"] = True
+        if not participant.get("joined_at_ms"):
+            participant["joined_at_ms"] = now
         self._participant_state[track_id] = participant
-        await self._emit(p.ev_participant(p.now_ms() - self._clock_start, participant))
+        log.info("participant %s (%s) joined on track %s", participant_id, participant["display_name"], track_id[:8])
+        await self._emit(p.ev_participant(now, participant))
 
         # Always watch for a camera, whatever we saw at join time: people switch
         # one on mid-meeting, and "no video track yet" is not "no camera".
@@ -488,17 +626,22 @@ class JazzPipeline:
         participant_id = self._participants.get(track_id)
         if participant_id is None:
             return
+        offset = self._track_start_ms.get(track_id, 0)
+        if events:
+            self._spoken.add(participant_id)
         for event in events:
+            start_ms = offset + event.start_ms
+            end_ms = offset + event.end_ms
             if event.kind == "partial":
                 self._stats["partials"] += 1
                 await self._emit(
                     p.ev_segment(
-                        at(),
+                        end_ms,
                         {
                             "id": f"{participant_id}-live",
                             "participant_id": participant_id,
-                            "start_ms": event.start_ms,
-                            "end_ms": event.end_ms,
+                            "start_ms": start_ms,
+                            "end_ms": end_ms,
                             "text": event.text,
                             "final": False,
                             "confidence": None,
@@ -509,21 +652,21 @@ class JazzPipeline:
             elif event.kind == "final" and event.text:
                 normalized = " ".join(event.text.lower().split())
                 previous = self._last_final.get(track_id)
-                if previous and previous[0] == normalized and abs(event.start_ms - previous[1]) <= 2000:
+                if previous and previous[0] == normalized and abs(start_ms - previous[1]) <= 2000:
                     # The decoder re-emitted the same phrase for the same words;
                     # keeping both would double every "алло" in the protocol.
                     log.debug("dropping duplicate final for %s: %s", track_id[:8], event.text)
                     continue
-                self._last_final[track_id] = (normalized, event.start_ms)
+                self._last_final[track_id] = (normalized, start_ms)
                 self._stats["finals"] += 1
                 await self._emit(
                     p.ev_segment(
-                        at(),
+                        end_ms,
                         {
-                            "id": f"{participant_id}-{event.start_ms}",
+                            "id": f"{participant_id}-{start_ms}",
                             "participant_id": participant_id,
-                            "start_ms": event.start_ms,
-                            "end_ms": event.end_ms,
+                            "start_ms": start_ms,
+                            "end_ms": end_ms,
                             "text": event.text,
                             "final": True,
                             "confidence": None,

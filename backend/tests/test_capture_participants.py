@@ -22,7 +22,9 @@ def agent_with_tracks(*names: str) -> BrowserAgent:
     agent = BrowserAgent("https://salutejazz.ru/calls/abc123", display_name="Ассистент")
     for index, name in enumerate(names, start=1):
         track_id = f"track-{index}"
-        agent._tracks[track_id] = TrackInfo(track_id=track_id, name=name, label="audio")
+        agent._tracks[track_id] = TrackInfo(
+            track_id=track_id, name=name, label="audio", invented=is_placeholder(name)
+        )
     return agent
 
 
@@ -211,3 +213,77 @@ def test_a_track_with_audio_is_not_reported() -> None:
     agent._check_silent_tracks()
 
     assert agent.updates.empty()
+
+
+def test_a_departed_name_is_free_for_the_next_person() -> None:
+    """The reported bug: returning "Адель" became "Участник 3" because the name
+    stayed reserved by the participant who had already left."""
+    agent = agent_with_tracks("Адель")
+    agent.sync_names(["Адель"])          # she is here
+    agent.sync_names([])                 # she leaves
+    agent.sync_names([])
+
+    # A new track arrives before its tile is painted: our own placeholder name.
+    agent._tracks["track-2"] = TrackInfo(track_id="track-2", name="Участник 2", label="audio")
+    updates = agent.sync_names(["Адель"])  # she is back under the same name
+
+    renamed = [update for update in updates if update.name]
+    assert renamed, "the returning participant must get the free name"
+    assert renamed[0].track_id == "track-2"
+    assert renamed[0].name == "Адель"
+    assert agent._tracks["track-2"].name == "Адель"
+
+
+def test_a_rename_in_place_is_picked_up() -> None:
+    """One name gone, one new name appeared: that is the same person renamed."""
+    agent = agent_with_tracks("Адель")
+
+    updates = agent.sync_names(["Адельы"])
+
+    renamed = [update for update in updates if update.name]
+    assert [(update.track_id, update.name) for update in renamed] == [("track-1", "Адельы")]
+    assert agent._tracks["track-1"].present is True, "a rename is not a departure"
+
+
+def test_a_new_name_next_to_the_old_one_is_a_newcomer() -> None:
+    """Two names listed, one track: the extra name is somebody who joined."""
+    agent = agent_with_tracks("Адель")
+
+    updates = agent.sync_names(["Адель", "Борис"])
+
+    assert all(update.name is None for update in updates), "nobody was renamed"
+    assert agent._tracks["track-1"].name == "Адель"
+
+
+def test_placeholders_do_not_repeat() -> None:
+    agent = agent_with_tracks("Участник 2")
+    agent._tracks["track-2"] = TrackInfo(track_id="track-2", name="", label="audio")
+
+    agent.sync_names([])
+
+    assert agent._next_placeholder() == "Участник 3"
+
+
+def test_a_real_anonymous_name_is_not_treated_as_ours() -> None:
+    """The product's own "Участник 3" is who that person is, not a placeholder
+    we may rewrite when somebody else appears."""
+    agent = BrowserAgent("https://salutejazz.ru/calls/abc123", display_name="Ассистент")
+    # invented=False: the room itself shows this name, it is not our fallback.
+    agent._tracks["track-1"] = TrackInfo(
+        track_id="track-1", name="Участник 3", label="audio", invented=False
+    )
+
+    updates = agent.sync_names(["Участник 3", "Анна"])
+
+    assert all(update.name is None for update in updates)
+    assert agent._tracks["track-1"].name == "Участник 3"
+
+
+def test_our_own_placeholder_is_replaced_by_a_real_name() -> None:
+    agent = agent_with_tracks("Участник 1")  # invented=True in the helper
+    assert agent._tracks["track-1"].invented is True
+
+    updates = agent.sync_names(["Анна"])
+
+    assert [(update.track_id, update.name) for update in updates] == [("track-1", "Анна")]
+    assert agent._tracks["track-1"].invented is False

@@ -118,3 +118,13 @@ def new_participant(
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def ev_participant_removed(at_ms: int, participant_id: str) -> dict[str, Any]:
+    """An empty participant record that never said anything is withdrawn.
+
+    A track is registered before the room paints its tile, so a person who
+    returns can start as "Участник N" and only then learn their name. Once the
+    real record takes over, the placeholder must not stay in the archive.
+    """
+    return {"type": "participant_removed", "at_ms": at_ms, "participant_id": participant_id}
