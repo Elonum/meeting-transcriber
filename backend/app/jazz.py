@@ -20,6 +20,7 @@ from .errors import describe_error
 from .faces import make_detector
 from .identity import (
     MIN_FACE_CONFIDENCE,
+    MIN_IDENTITY_FACE_PX,
     FaceMatch,
     IdentityBook,
     identity_enabled,
@@ -159,7 +160,7 @@ class JazzPipeline:
         try:
             await self.agent.start()
         except Exception as error:  # noqa: BLE001 - surfaced to the UI
-            await self._screenshot(at(), "join-failed")
+            await self._screenshot("join-failed")
             await emit(
                 p.ev_notice(
                     at(),
@@ -186,7 +187,7 @@ class JazzPipeline:
             )
 
         if not self.agent._tracks:
-            shot = await self._screenshot(at(), "no-tracks")
+            shot = await self._screenshot("no-tracks")
             await emit(
                 p.ev_notice(
                     at(),
@@ -232,7 +233,7 @@ class JazzPipeline:
             for task in self._face_tasks:
                 task.cancel()
             await asyncio.gather(reader, watcher, *self._face_tasks, return_exceptions=True)
-            await self._flush(at)
+            await self._flush()
             await self.agent.close()
             tracks, recorded_bytes = self._stop_recording()
             if tracks:
@@ -256,10 +257,10 @@ class JazzPipeline:
         if lost_browser:
             raise RuntimeError("браузер агента закрылся или упал — сессия прервана")
 
-    async def _flush(self, at: Any) -> None:
+    async def _flush(self) -> None:
         for track_id, asr in self._asr.items():
             events = await asyncio.to_thread(asr.flush)
-            await self._publish(track_id, events, at)
+            await self._publish(track_id, events)
 
     async def _room_is_empty(self, at_ms: int) -> bool:
         """Finish the meeting once everybody has left and stayed away.
@@ -398,7 +399,7 @@ class JazzPipeline:
         self.recorder = None
         return len(manifest), total
 
-    async def _screenshot(self, at: Any, reason: str) -> str | None:
+    async def _screenshot(self, reason: str) -> str | None:
         """Save what the page looked like — the fastest way to explain a failed join."""
         directory = getattr(self, "_artifacts_dir", None)
         if directory is None:
@@ -429,7 +430,7 @@ class JazzPipeline:
             except Exception:  # noqa: BLE001 - one bad chunk must not kill the meeting
                 log.exception("asr failed for track %s", chunk.track_id[:8])
                 continue
-            await self._publish(chunk.track_id, events, lambda: p.now_ms() - self._clock_start)
+            await self._publish(chunk.track_id, events)
 
     def _claim_participant(self, name: str) -> dict[str, Any]:
         """Find the participant for a display name, creating one when needed.
@@ -668,6 +669,10 @@ class JazzPipeline:
         state = self._participant_state.get(track_id)
         if state is None or detection.confidence < MIN_FACE_CONFIDENCE:
             return False
+        box = getattr(detection, "box", None)
+        if not box or min(box[2], box[3]) < MIN_IDENTITY_FACE_PX:
+            # Too small to recognise: such a frame must never confirm a merge.
+            return False
         match = self.identity.observe(
             participant_id,
             detection.embedding,
@@ -738,7 +743,7 @@ class JazzPipeline:
         self._face_by_participant[target_id] = task
         return True
 
-    async def _publish(self, track_id: str, events: list[ASREvent], at: Any) -> None:
+    async def _publish(self, track_id: str, events: list[ASREvent]) -> None:
         assert self._emit is not None
         participant_id = self._participants.get(track_id)
         if participant_id is None:

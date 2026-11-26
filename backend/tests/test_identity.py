@@ -198,8 +198,8 @@ def test_segments_are_timestamped_in_session_time() -> None:
         # Anna started at 0 s, Boris at 30 s; both spoke for two seconds.
         pipeline._track_start_ms["t1"] = 0
         pipeline._track_start_ms["t2"] = 30_000
-        await pipeline._publish("t1", [ASREvent(kind="final", text="раз", start_ms=0, end_ms=2000)], None)
-        await pipeline._publish("t2", [ASREvent(kind="final", text="два", start_ms=0, end_ms=2000)], None)
+        await pipeline._publish("t1", [ASREvent(kind="final", text="раз", start_ms=0, end_ms=2000)])
+        await pipeline._publish("t2", [ASREvent(kind="final", text="два", start_ms=0, end_ms=2000)])
         return [event for event in events if event["type"] == "segment"]
 
     segments = run(scenario())
@@ -240,9 +240,7 @@ def test_a_placeholder_that_spoke_keeps_its_lines() -> None:
         await pipeline._register_track("t1", "Адель")
         await pipeline._apply_participant_update(ParticipantUpdate("t1", present=False))
         await pipeline._register_track("t2", "Участник 2")
-        await pipeline._publish(
-            "t2", [ASREvent(kind="final", text="привет", start_ms=0, end_ms=1000)], None
-        )
+        await pipeline._publish("t2", [ASREvent(kind="final", text="привет", start_ms=0, end_ms=1000)])
         await pipeline._apply_participant_update(ParticipantUpdate("t2", name="Адель"))
         return participants(events)
 

@@ -39,8 +39,7 @@ def _manifest(session: Session) -> str:
         lines.append(f"  {part['display_name']} ({role}) — id {part['id']}")
     if audio:
         lines.extend(["", "Записи:"])
-        for item in audio:
-            lines.append(f"  audio/{item.file} — {item.duration_s} с")
+        lines.extend(f"  audio/{item.file} — {item.duration_s} с" for item in audio)
     else:
         lines.extend(["", "Аудио не записывалось."])
     lines.extend(

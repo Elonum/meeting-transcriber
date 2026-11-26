@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
@@ -40,8 +40,9 @@ DEFAULT_THRESHOLD = 0.363
 DEFAULT_MARGIN = 0.05
 #: Independent frames that must agree before a merge happens.
 DEFAULT_CONFIRMATIONS = 2
-#: A tiny face carries too little detail to be recognised confidently.
-MIN_FACE_PX = 80
+#: A tiny face carries too little detail to be recognised confidently: at 80 px
+#: the embedding starts to drift, so such frames never confirm a merge.
+MIN_IDENTITY_FACE_PX = 80
 #: YuNet score below which the frame is not trusted for identity at all.
 MIN_FACE_CONFIDENCE = 0.65
 
@@ -111,7 +112,6 @@ class _Entry:
     name: str = ""
     present: bool = False
     samples: int = 1
-    details: dict = field(default_factory=dict)
 
 
 class IdentityBook:

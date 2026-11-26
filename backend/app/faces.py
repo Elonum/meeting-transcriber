@@ -141,13 +141,7 @@ def make_embedder() -> FaceEmbedder | None:
             log.exception("sface: cannot load %s", path)
     else:
         log.warning("face identity is on but %s is missing", path)
-
-    try:  # ArcFace through InsightFace, when that interpreter has the wheels
-        import insightface  # noqa: F401
-        import onnxruntime  # noqa: F401
-    except Exception:  # noqa: BLE001 - expected on Python 3.14
-        log.warning("face identity is on but no embedding model is available")
-        return None
+    log.warning("face identity is on but no embedding model is available; identity stays off")
     return None
 
 

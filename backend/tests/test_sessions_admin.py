@@ -233,3 +233,26 @@ def test_a_withdrawn_participant_leaves_the_archive(client: TestClient) -> None:
 
     assert "p-9" not in session.participants, "an empty record must disappear"
     assert "p-8" in session.participants, "a record with lines must stay attributed"
+
+
+def test_a_public_http_link_is_rejected(client: TestClient) -> None:
+    """http is only for the local test double; a public meeting needs https."""
+    response = client.post("/api/sessions", json={"meeting_url": "http://example.com/meet"})
+
+    assert response.status_code == 422
+
+
+def test_too_many_parallel_meetings_are_refused(client: TestClient, monkeypatch) -> None:
+    from app import protocol as p
+    from app.main import manager
+
+    # Other tests may still have a live session; the cap is relative to them.
+    active = sum(1 for session in manager.sessions.values() if session.state not in p.TERMINAL_STATES)
+    monkeypatch.setenv("TRANSCRIBE_MAX_SESSIONS", str(active + 1))
+    first = client.post("/api/sessions", json={"meeting_url": MEETING, "speed": 5})
+    assert first.status_code == 201, first.text
+
+    second = client.post("/api/sessions", json={"meeting_url": MEETING, "speed": 5})
+
+    assert second.status_code == 429
+    assert "TRANSCRIBE_MAX_SESSIONS" in second.json()["detail"]

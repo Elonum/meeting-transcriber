@@ -72,7 +72,7 @@ def test_pipeline_identity() -> None:
 
 def test_artifacts_dir_is_optional() -> None:
     pipeline = JazzPipeline("https://jazz.sber.ru/meeting/x")
-    assert asyncio.run(pipeline._screenshot(0, "test")) is None
+    assert asyncio.run(pipeline._screenshot("test")) is None
 
 
 def test_artifacts_dir_can_be_set() -> None:
@@ -136,7 +136,7 @@ def test_duplicate_final_is_dropped() -> None:
     phrase = ASREvent(kind="final", text="Алло.", start_ms=1000, end_ms=1400)
     repeat = ASREvent(kind="final", text="Алло.", start_ms=1100, end_ms=1500)
 
-    asyncio.run(pipeline._publish("track-1", [phrase, repeat], lambda: 0))
+    asyncio.run(pipeline._publish("track-1", [phrase, repeat]))
     finals = [e for e in events if e["type"] == "segment"]
 
     assert len(finals) == 1
@@ -152,7 +152,7 @@ def test_a_real_repetition_is_kept() -> None:
     first = ASREvent(kind="final", text="Да.", start_ms=1000, end_ms=1400)
     later = ASREvent(kind="final", text="Да.", start_ms=9000, end_ms=9400)
 
-    asyncio.run(pipeline._publish("track-1", [first, later], lambda: 0))
+    asyncio.run(pipeline._publish("track-1", [first, later]))
 
     assert len([e for e in events if e["type"] == "segment"]) == 2
 

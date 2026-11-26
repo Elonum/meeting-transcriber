@@ -58,3 +58,49 @@ def test_console_notes_are_redacted(monkeypatch) -> None:
     assert len(agent.notes) == 1
     assert "SECRET" not in agent.notes[0]
     assert "psw=" in agent.notes[0]
+
+
+# -- meeting links are a boundary -------------------------------------------
+
+
+def test_a_public_https_link_is_accepted() -> None:
+    from app.security import validate_meeting_url
+
+    assert validate_meeting_url("https://salutejazz.ru/calls/abc123?psw=x") == (
+        "https://salutejazz.ru/calls/abc123?psw=x"
+    )
+
+
+def test_the_local_test_double_is_allowed_over_http() -> None:
+    from app.security import validate_meeting_url
+
+    assert validate_meeting_url("http://127.0.0.1:8000/fake-meeting/?peers=1")
+    assert validate_meeting_url("http://localhost:8000/fake-meeting/")
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "http://example.com/meet",          # http to the outside world
+        "file:///etc/passwd",               # not a web link at all
+        "javascript:alert(1)",
+        "http://169.254.169.254/latest",    # cloud metadata
+        "https://10.0.0.5/meet",            # private network
+        "https://192.168.1.10/meet",
+        "https://user:pass@salutejazz.ru/x",  # credentials in the URL
+        "not a link",
+    ],
+)
+def test_dangerous_links_are_refused(link: str) -> None:
+    from app.security import validate_meeting_url
+
+    with pytest.raises(ValueError):
+        validate_meeting_url(link)
+
+
+def test_a_private_host_can_be_allowed_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.security import validate_meeting_url
+
+    monkeypatch.setenv("TRANSCRIBE_ALLOW_PRIVATE_HOSTS", "1")
+
+    assert validate_meeting_url("https://10.0.0.5/meet") == "https://10.0.0.5/meet"

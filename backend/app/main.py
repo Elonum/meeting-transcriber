@@ -28,7 +28,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +44,7 @@ from .bundle import BUNDLE_NAME, build_bundle
 from .identity import identity_enabled
 from .mock import MockPipeline
 from .recording import read_recordings
+from .security import validate_meeting_url
 from .session import SessionManager
 
 log = logging.getLogger("transcribe")
@@ -150,10 +151,7 @@ class StartRequest(BaseModel):
     @field_validator("meeting_url")
     @classmethod
     def _check_url(cls, value: str) -> str:
-        parsed = urlparse(value.strip())
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise ValueError("нужна полная ссылка вида https://…")
-        return value.strip()
+        return validate_meeting_url(value)
 
 
 class SessionResponse(BaseModel):
@@ -174,6 +172,18 @@ def _require(session_id: str):
 SESSION_ID = re.compile(r"^[0-9a-f]{6,32}$")
 #: Only files this service writes may be served back.
 AUDIO_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}\.wav$")
+
+
+#: A runaway client must not turn the recorder into a load generator: every live
+#: session holds a browser and, on a GPU, a whisper context.
+DEFAULT_MAX_ACTIVE = 20
+
+
+def max_active_sessions() -> int:
+    try:
+        return max(1, int(os.environ.get("TRANSCRIBE_MAX_SESSIONS", DEFAULT_MAX_ACTIVE)))
+    except ValueError:
+        return DEFAULT_MAX_ACTIVE
 
 
 def _validate_id(session_id: str) -> None:
@@ -296,6 +306,13 @@ def _build_pipeline(
 
 @app.post("/api/sessions", status_code=201)
 async def create_session(payload: StartRequest) -> dict:
+    active = [s for s in manager.sessions.values() if s.state not in p.TERMINAL_STATES]
+    if len(active) >= max_active_sessions():
+        raise HTTPException(
+            status_code=429,
+            detail=f"уже идут {len(active)} встреч(и); остановите лишние или поднимите TRANSCRIBE_MAX_SESSIONS",
+        )
+
     start_at_ms: int | None = None
     if payload.start_at is not None:
         moment = payload.start_at

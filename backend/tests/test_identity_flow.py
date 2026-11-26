@@ -47,8 +47,12 @@ def make_pipeline() -> tuple[JazzPipeline, list[dict[str, Any]]]:
     return pipeline, events
 
 
-def face(vector: tuple[float, ...], confidence: float = 0.9) -> Any:
-    return SimpleNamespace(confidence=confidence, embedding=vector, thumbnail=None)
+def face(
+    vector: tuple[float, ...], confidence: float = 0.9, size: int = 200
+) -> Any:
+    return SimpleNamespace(
+        confidence=confidence, embedding=vector, thumbnail=None, box=(10, 10, size, size)
+    )
 
 
 def run(coroutine: Any) -> Any:
@@ -146,6 +150,23 @@ def test_a_low_confidence_frame_never_merges() -> None:
         return [
             await pipeline._observe_face("p-2", "t2", face(ALICE, confidence=0.5)),
             await pipeline._observe_face("p-2", "t2", face(ALICE_AGAIN, confidence=0.5)),
+        ]
+
+    assert run(scenario()) == [False, False]
+
+
+def test_a_tiny_face_never_merges() -> None:
+    """An 80 px crop is too coarse for identity, however good the vector looks."""
+
+    async def scenario() -> list[bool]:
+        pipeline, _events = make_pipeline()
+        await pipeline._register_track("t1", "Адель")
+        await pipeline._observe_face("p-1", "t1", face(ALICE))
+        await pipeline._apply_participant_update(ParticipantUpdate("t1", present=False))
+        await pipeline._register_track("t2", "Адельы")
+        return [
+            await pipeline._observe_face("p-2", "t2", face(ALICE, size=40)),
+            await pipeline._observe_face("p-2", "t2", face(ALICE_AGAIN, size=40)),
         ]
 
     assert run(scenario()) == [False, False]

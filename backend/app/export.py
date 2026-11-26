@@ -21,7 +21,7 @@ def _ts(ms: int, sep: str) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}{sep}{millis:03d}"
 
 
-def _names(session: dict[str, Any], participants: Iterable[dict[str, Any]]) -> dict[str, str]:
+def _names(participants: Iterable[dict[str, Any]]) -> dict[str, str]:
     names = {part["id"]: part["display_name"] for part in participants}
     names.setdefault("unknown", "Неизвестный спикер")
     return names
@@ -92,7 +92,7 @@ def to_md(
         "",
         f"- **Ссылка:** {session['meeting_url']}",
         f"- **Начало:** {started:%Y-%m-%d %H:%M %z}",
-        f"- **Длительность:** {_duration(session, segments)}",
+        f"- **Длительность:** {_duration(segments)}",
         f"- **Пайплайн:** `{session['pipeline']}`",
         f"- **Участники:** {people or '—'}",
         "",
@@ -106,7 +106,7 @@ def to_md(
     return "\n".join(lines)
 
 
-def _duration(session: dict[str, Any], segments: Iterable[dict[str, Any]]) -> str:
+def _duration(segments: Iterable[dict[str, Any]]) -> str:
     ordered = _ordered(segments)
     if not ordered:
         return "—"
@@ -164,7 +164,7 @@ def render(
     segments: list[dict[str, Any]],
     participants: list[dict[str, Any]],
 ) -> str:
-    names = _names(session, participants)
+    names = _names(participants)
     if fmt == "srt":
         return to_srt(segments, names)
     if fmt == "vtt":
