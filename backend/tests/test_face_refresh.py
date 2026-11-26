@@ -39,7 +39,11 @@ class ScriptedDetector:
         value = self.confidences.pop(0) if self.confidences else None
         if value is None:
             return None
-        return type("Detection", (), {"confidence": value, "thumbnail": f"thumb-{value}"})()
+        return type(
+        "Detection",
+        (),
+        {"confidence": value, "thumbnail": f"thumb-{value}", "embedding": None},
+    )()
 
 
 def pipeline_with(frames: list[str | None], confidences: list[float | None]) -> tuple[JazzPipeline, FrameAgent, list]:

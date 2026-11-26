@@ -12,15 +12,19 @@ embeddings, matching a name from a roster). It needs Python 3.12 — no cp314 wh
 for insightface — and is not required for "which face belongs to which speaker",
 because that mapping already comes from the audio/video track.
 
-Scope note: this is *detection*, not identification. We report that a face was
-found in a participant's stream and show the crop; we do not match people against
-a biometric database (see the legal section of the README).
+Identification is optional and off by default (``TRANSCRIBE_FACE_IDENTITY=1``).
+When it is on, ``SFaceEmbedder`` turns the same crop into a 128-number vector, so
+the meeting can tell "the same person came back" from "somebody new joined". The
+vector lives in memory for the duration of the meeting only — see
+``app.identity`` and the privacy section of the README.
 """
 
 from __future__ import annotations
 
 import base64
 import logging
+import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -32,6 +36,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, numpy stays a lazy import
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_YUNET = ROOT / ".models" / "face_detection_yunet_2023mar.onnx"
+#: OpenCV Zoo SFace (2021dec): 37 MB, 128-dimensional embeddings, no extra wheels.
+DEFAULT_SFACE = ROOT / ".models" / "face_recognition_sface_2021dec.onnx"
 
 #: A face smaller than this (in pixels of the original frame) is not worth reporting.
 MIN_FACE_PX = 32
@@ -45,12 +51,63 @@ class Detection:
     #: Cropped, downscaled JPEG data URL for the tile avatar.
     thumbnail: str | None = None
     box: tuple[int, int, int, int] | None = None
+    #: Unit-length face vector, only when identity is enabled. Never persisted.
+    embedding: tuple[float, ...] | None = None
 
 
 class FaceDetector(Protocol):
     name: str
 
     def detect(self, frame_data_url: str) -> Detection | None: ...
+
+
+class FaceEmbedder(Protocol):
+    """Turns a detected face into a vector that can be compared with others."""
+
+    name: str
+
+    def embed(self, image: np.ndarray, face: np.ndarray) -> tuple[float, ...] | None: ...
+
+
+class SFaceEmbedder:
+    """OpenCV Zoo SFace: one more ONNX file, no extra Python packages.
+
+    OpenCV ships the recogniser itself, so identification works on the same
+    interpreter as the detector. ``alignCrop`` uses the five landmarks YuNet
+    already returns, which is what makes the embeddings comparable at all.
+    """
+
+    name = "sface"
+
+    def __init__(self, model_path: Path = DEFAULT_SFACE) -> None:
+        import cv2
+
+        self.model_path = model_path
+        self._recognizer = cv2.FaceRecognizerSF_create(str(model_path), "")
+        # cv2 models are not thread-safe, and every participant has its own face
+        # loop calling into this object from a worker thread.
+        self._lock = threading.Lock()
+        log.info("sface ready (%s)", model_path.name)
+
+    def available(self) -> bool:
+        return self.model_path.is_file()
+
+    def embed(self, image: np.ndarray, face: np.ndarray) -> tuple[float, ...] | None:
+        import numpy as np
+
+        if face is None:
+            return None
+        try:
+            with self._lock:
+                aligned = self._recognizer.alignCrop(image, face)
+                feature = self._recognizer.feature(aligned).flatten()
+        except Exception:  # noqa: BLE001 - a bad crop must not break the meeting
+            log.debug("sface: cannot embed this frame", exc_info=True)
+            return None
+        norm = float(np.linalg.norm(feature))
+        if norm <= 1e-9:
+            return None
+        return tuple(float(value) / norm for value in feature)
 
 
 class NullDetector:
@@ -60,6 +117,38 @@ class NullDetector:
 
     def detect(self, frame_data_url: str) -> Detection | None:  # noqa: ARG002
         return None
+
+
+def face_similarity(first: tuple[float, ...], second: tuple[float, ...]) -> float:
+    """Cosine similarity of two embeddings; public so tools and tests can use it."""
+    from .identity import cosine
+
+    return cosine(first, second)
+
+
+def make_embedder() -> FaceEmbedder | None:
+    """The identity backend, or None when identity is off (the default)."""
+    from .identity import identity_enabled
+
+    if not identity_enabled():
+        return None
+
+    path = Path(os.environ.get("TRANSCRIBE_FACE_MODEL", DEFAULT_SFACE))
+    if path.is_file():
+        try:
+            return SFaceEmbedder(path)
+        except Exception:  # noqa: BLE001 - a broken model must not stop the meeting
+            log.exception("sface: cannot load %s", path)
+    else:
+        log.warning("face identity is on but %s is missing", path)
+
+    try:  # ArcFace through InsightFace, when that interpreter has the wheels
+        import insightface  # noqa: F401
+        import onnxruntime  # noqa: F401
+    except Exception:  # noqa: BLE001 - expected on Python 3.14
+        log.warning("face identity is on but no embedding model is available")
+        return None
+    return None
 
 
 def _decode(frame_data_url: str) -> bytes:
@@ -148,11 +237,16 @@ class YuNetDetector:
         *,
         max_width: int = 320,
         score_threshold: float = 0.6,
+        embedder: FaceEmbedder | None = None,
     ) -> None:
         self.model_path = Path(model_path) if model_path else DEFAULT_YUNET
         self.max_width = max_width
         self.score_threshold = score_threshold
+        self.embedder = embedder
         self._detector: Any = None
+        #: Every participant has its own face loop, so the model is called from
+        #: several threads: cv2 objects are not safe to share without a lock.
+        self._lock = threading.Lock()
 
     def available(self) -> bool:
         return self.model_path.is_file()
@@ -180,31 +274,39 @@ class YuNetDetector:
             return None
 
         height, width = image.shape[:2]
-        detector = self._ensure()
-        detector.setInputSize((width, height))
-        _count, faces = detector.detect(image)
+        with self._lock:
+            detector = self._ensure()
+            detector.setInputSize((width, height))
+            _count, faces = detector.detect(image)
         if faces is None or len(faces) == 0:
             return None
 
-        best = None
+        best: tuple[float, tuple[int, int, int, int], Any] | None = None
         for face in faces:
             score = float(face[-1])
             x, y, w, h = (int(value) for value in face[:4])
             if score < self.score_threshold or min(w, h) < MIN_FACE_PX:
                 continue
             if best is None or score > best[0]:
-                best = (score, (x, y, w, h))
+                best = (score, (x, y, w, h), face)
         if best is None:
             return None
 
-        score, box = best
+        score, box, face_row = best
         thumbnail = face_crop(image, box, max_width=self.max_width)
         if thumbnail is None:
             return None
+        embedding = None
+        if self.embedder is not None:
+            try:
+                embedding = self.embedder.embed(image, face_row)
+            except Exception:  # noqa: BLE001 - identity must never break a meeting
+                log.debug("sface: embedding failed", exc_info=True)
         return Detection(
             confidence=round(score, 3),
             thumbnail=thumbnail,
-            box=(x, y, w, h),
+            box=box,
+            embedding=embedding,
         )
 
 
@@ -263,6 +365,7 @@ class InsightFaceDetector:
 
 def make_detector(kind: str = "auto") -> FaceDetector:
     """Pick the best detector that actually works on this interpreter."""
+    embedder = make_embedder()
     if kind in ("auto", "insightface"):
         try:
             import insightface  # noqa: F401
@@ -274,7 +377,7 @@ def make_detector(kind: str = "auto") -> FaceDetector:
                 log.warning("insightface requested but unavailable")
 
     if kind in ("auto", "yunet"):
-        candidate = YuNetDetector()
+        candidate = YuNetDetector(embedder=embedder)
         if candidate.available():
             try:
                 import cv2  # noqa: F401

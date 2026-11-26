@@ -18,6 +18,13 @@ from .asr import ASREvent, ParticipantASR, get_runner, prompt_from_env
 from .capture import UNNAMED_PREFIX, BrowserAgent
 from .errors import describe_error
 from .faces import make_detector
+from .identity import (
+    MIN_FACE_CONFIDENCE,
+    FaceMatch,
+    IdentityBook,
+    identity_enabled,
+)
+from .identity import settings as identity_settings
 from .recording import SessionRecorder
 from .session import Emitter
 
@@ -90,6 +97,14 @@ class JazzPipeline:
         )
         self.runner = get_runner(model, device=device, language=language, prompt=prompt_from_env())
         self.detector = make_detector()
+        threshold, margin, confirmations = identity_settings()
+        self.identity: IdentityBook | None = (
+            IdentityBook(threshold=threshold, margin=margin, confirmations=confirmations)
+            if identity_enabled() and getattr(self.detector, "embedder", None) is not None
+            else None
+        )
+        #: participant id -> record, so a face match can find the record fast.
+        self._by_id: dict[str, dict[str, Any]] = {}
         self._participants: dict[str, str] = {}  # track_id -> participant_id
         self._participant_state: dict[str, dict[str, Any]] = {}  # track_id -> session dict
         #: Participant records by display name, so somebody who leaves and comes
@@ -160,6 +175,15 @@ class JazzPipeline:
 
         for note in self.agent.notes[-6:]:
             await emit(p.ev_notice(at(), f"Вход: {note}"))
+
+        if self.identity is not None:
+            await emit(
+                p.ev_notice(
+                    at(),
+                    "Идентификация по лицу включена: шаблоны сравниваются только внутри "
+                    "этой встречи и не сохраняются.",
+                )
+            )
 
         if not self.agent._tracks:
             shot = await self._screenshot(at(), "no-tracks")
@@ -306,6 +330,8 @@ class JazzPipeline:
                 self._pending_removal.clear()
                 await self._emit(p.ev_participant(p.now_ms() - self._clock_start, state))
             resolved = self._rename(state, name)
+            if self.identity is not None:
+                self.identity.rename(state["id"], resolved)
             log.info("participant %s renamed to %s", state["id"], resolved)
             patch["display_name"] = resolved
         present = getattr(update, "present", None)
@@ -316,6 +342,8 @@ class JazzPipeline:
                 # The name is free again: a return under it is the same person,
                 # a new name is somebody else, and both are handled by _claim.
                 self._live.pop(state["id"], None)
+                if self.identity is not None:
+                    self.identity.mark_absent(state["id"])
                 # Nobody is on screen any more: stop asking for their camera.
                 watcher = self._face_by_participant.pop(state["id"], None)
                 if watcher is not None and not watcher.done():
@@ -422,6 +450,7 @@ class JazzPipeline:
         self._index += 1
         participant = p.new_participant(f"p-{self._index}", clean, color_index=self._index)
         self._by_name[clean] = participant
+        self._by_id[participant["id"]] = participant
         return participant
 
     def _unique_name(self, base: str) -> str:
@@ -522,6 +551,8 @@ class JazzPipeline:
         if not participant.get("joined_at_ms"):
             participant["joined_at_ms"] = now
         self._participant_state[track_id] = participant
+        if self.identity is not None:
+            self.identity.mark_present(participant_id, participant["display_name"])
         log.info("participant %s (%s) joined on track %s", participant_id, participant["display_name"], track_id[:8])
         await self._emit(p.ev_participant(now, participant))
 
@@ -603,6 +634,16 @@ class JazzPipeline:
                     await self._emit(p.ev_face(p.now_ms() - self._clock_start, participant_id, "frame", None, frame))
                 continue
 
+            # Identity is checked on every usable frame, before the "better
+            # picture" gate: recognising a returning person must not depend on
+            # whether this particular frame is prettier than the last one.
+            if (
+                self.identity is not None
+                and getattr(detection, "embedding", None) is not None
+                and await self._observe_face(participant_id, track_id, detection)
+            ):
+                return  # merged: a new watcher owns this track now
+
             improved = detection.confidence >= best_confidence + FACE_CONFIDENCE_STEP
             if has_face and not improved:
                 continue
@@ -620,6 +661,82 @@ class JazzPipeline:
                     )
                 )
 
+
+    async def _observe_face(self, participant_id: str, track_id: str, detection: Any) -> bool:
+        """Ask the identity book about this frame; True when records were merged."""
+        assert self.identity is not None
+        state = self._participant_state.get(track_id)
+        if state is None or detection.confidence < MIN_FACE_CONFIDENCE:
+            return False
+        match = self.identity.observe(
+            participant_id,
+            detection.embedding,
+            name=state.get("display_name"),
+            quality=detection.confidence,
+        )
+        if match is None or not match.confirmed or match.participant_id == participant_id:
+            return False
+        target = self._by_id.get(match.participant_id)
+        if target is None:
+            return False
+        return await self._merge_records(track_id, participant_id, target, match)
+
+    async def _merge_records(
+        self, track_id: str, from_id: str, target: dict[str, Any], match: FaceMatch
+    ) -> bool:
+        """One person, two records: keep the older one and move the track to it."""
+        assert self._emit is not None
+        target_id = target["id"]
+        if self._live.get(target_id, track_id) != track_id:
+            # Both are in the room: a guess here would fuse two people.
+            log.info("identity: not merging %s into %s, both are present", from_id, target_id)
+            return False
+
+        previous = self._participant_state.get(track_id) or {}
+        self._participants[track_id] = target_id
+        self._live[target_id] = track_id
+        self._live.pop(from_id, None)
+        self._participant_state[track_id] = target
+        asr = self._asr.get(track_id)
+        if asr is not None:
+            asr.participant_id = target_id
+        self._by_id.pop(from_id, None)
+        for name, record in list(self._by_name.items()):
+            if record.get("id") == from_id:
+                del self._by_name[name]
+        if self.identity is not None:
+            self.identity.forget(from_id)
+            self.identity.mark_present(target_id, target.get("display_name"))
+
+        info = self.agent._tracks.get(track_id)
+        # The tile name is the freshest one; the participant's own name is the
+        # fallback when the DOM gave us nothing.
+        wanted = (getattr(info, "name", "") or previous.get("display_name") or "").strip()
+        if wanted and wanted != target.get("display_name"):
+            # The person may have renamed since the last visit; the newest name wins.
+            self._rename(target, wanted)
+            if self.identity is not None:
+                self.identity.rename(target_id, target["display_name"])
+        target["present"] = True
+
+        at = p.now_ms() - self._clock_start
+        await self._emit(p.ev_participant_merged(at, from_id, target_id))
+        await self._emit(p.ev_participant(at, target))
+        await self._emit(
+            p.ev_notice(
+                at,
+                f"Лицо совпало с «{target['display_name']}» ({match.similarity:.2f}): "
+                "это тот же человек, записи объединены.",
+            )
+        )
+        log.info("identity: merged %s into %s (%.3f)", from_id, target_id, match.similarity)
+        # The current watcher ends with this function; the merged record gets a
+        # fresh one so its face keeps improving.
+        self._face_by_participant.pop(from_id, None)
+        task = asyncio.create_task(self._face_loop(target_id, track_id))
+        self._face_tasks.append(task)
+        self._face_by_participant[target_id] = task
+        return True
 
     async def _publish(self, track_id: str, events: list[ASREvent], at: Any) -> None:
         assert self._emit is not None

@@ -41,6 +41,7 @@ from . import auth, retention
 from . import export as exporters
 from . import protocol as p
 from .bundle import BUNDLE_NAME, build_bundle
+from .identity import identity_enabled
 from .mock import MockPipeline
 from .recording import read_recordings
 from .session import SessionManager
@@ -219,6 +220,7 @@ async def health() -> dict:
         "data_dir": str(DATA_DIR),
         "static_ready": (STATIC_DIR / "index.html").is_file(),
         "log_file": str(LOG_FILE),
+        "face_identity": identity_enabled(),
         "auth_required": auth.auth_enabled(),
         "retention_days": retention.retention_days(),
     }

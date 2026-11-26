@@ -166,14 +166,52 @@
         const answer = await receiver.createAnswer();
         await receiver.setLocalDescription(answer);
         await sender.setRemoteDescription(answer);
+
+        return { sender, receiver, tile };
       }
 
+      // Reproduces the real case: a person hangs up and comes back under a
+      // different name with the same face. Their audio and video tracks end,
+      // a new connection appears, and identity has to recognise them.
+      async function rejoinLater(index, seconds, newName) {
+        const source = sources[index - 1];
+        const previous = connections[index - 1];
+        try {
+          // close() does not fire events, so tell the other side explicitly that
+          // this participant's tracks are over — that is what a hang-up looks
+          // like to the agent.
+          previous.receiver.getReceivers().forEach((receiver) => {
+            if (receiver.track) receiver.track.dispatchEvent(new Event('ended'));
+          });
+          previous.sender.getSenders().forEach((sender) => sender.track && sender.track.stop());
+          previous.sender.close();
+          previous.receiver.close();
+        } catch (error) {}
+        previous.tile.remove();
+        const fresh = await connectParticipant(
+          { url: source.url, tone: source.tone, name: newName },
+          index,
+        );
+        connections[index - 1] = fresh;
+        status.textContent = `Участник ${index} вернулся как ${newName}`;
+      }
+
+      const connections = [];
       (async () => {
         for (let i = 0; i < sources.length; i += 1) {
-          await connectParticipant(sources[i], i + 1);
+          connections[i] = await connectParticipant(sources[i], i + 1);
         }
         status.textContent = 'Участников подключено: ' + sources.length;
         status.className = 'badge';
+
+        const rejoinIndex = Number(params.get('rejoin') || '0');
+        const rejoinAfter = Number(params.get('rejoinAfter') || '0');
+        if (rejoinIndex && rejoinAfter) {
+          const newName = params.get('rejoinName') || `Участник ${rejoinIndex} снова`;
+          setTimeout(() => {
+            rejoinLater(rejoinIndex, rejoinAfter, newName).catch(() => {});
+          }, rejoinAfter * 1000);
+        }
       })().catch((error) => {
         status.textContent = 'Ошибка: ' + error;
       });

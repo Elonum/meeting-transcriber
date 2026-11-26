@@ -119,6 +119,14 @@ class Session:
             part = event["participant"]
             merged = {**self.participants.get(part["id"], {}), **part}
             self.participants[part["id"]] = merged
+        elif kind == "participant_merged":
+            # One person, two records: move the lines and drop the spare record.
+            source, target = event["from_id"], event["to_id"]
+            if target in self.participants:
+                for segment in self.segments.values():
+                    if segment.get("participant_id") == source:
+                        segment["participant_id"] = target
+                self.participants.pop(source, None)
         elif kind == "participant_removed":
             # Only a record that never produced a line may disappear: otherwise
             # its lines would point at nobody.

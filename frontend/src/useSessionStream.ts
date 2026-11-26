@@ -70,6 +70,23 @@ function reducer(state: StreamState, action: Action): StreamState {
           },
         },
       }
+    case 'participant_merged': {
+      // Two records turned out to be one person: re-point the lines instead of
+      // dropping them, so nothing said before the merge is lost.
+      const rekey = (segments: Record<string, Segment>) => {
+        const next: Record<string, Segment> = {}
+        for (const [id, segment] of Object.entries(segments)) {
+          next[id] =
+            segment.participant_id === event.from_id
+              ? { ...segment, participant_id: event.to_id }
+              : segment
+        }
+        return next
+      }
+      const participants = { ...state.participants }
+      delete participants[event.from_id]
+      return { ...state, participants, finals: rekey(state.finals), partials: rekey(state.partials) }
+    }
     case 'participant_removed': {
       // An empty record that never spoke was withdrawn: the real person's
       // record replaced it, so the spare tile must disappear too.

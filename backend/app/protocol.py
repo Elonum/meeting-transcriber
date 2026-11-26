@@ -128,3 +128,13 @@ def ev_participant_removed(at_ms: int, participant_id: str) -> dict[str, Any]:
     real record takes over, the placeholder must not stay in the archive.
     """
     return {"type": "participant_removed", "at_ms": at_ms, "participant_id": participant_id}
+
+
+def ev_participant_merged(at_ms: int, from_id: str, to_id: str) -> dict[str, Any]:
+    """Two records turned out to be one person; lines move to the kept record.
+
+    A placeholder that already spoke cannot simply be withdrawn — its lines
+    would point at nobody. The session re-points the segments instead, so the
+    transcript keeps every word and one person keeps one tile.
+    """
+    return {"type": "participant_merged", "at_ms": at_ms, "from_id": from_id, "to_id": to_id}
