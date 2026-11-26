@@ -120,7 +120,7 @@ class JazzPipeline:
         await emit(
             p.ev_participant(
                 at(),
-                p.new_participant("p-agent", "Ассистент (бот)", role="bot", has_video=False),
+                p.new_participant("p-agent", "Ассистент", role="bot", has_video=False),
             )
         )
 
@@ -289,6 +289,20 @@ class JazzPipeline:
                 patch["speaking"] = False
         if len(patch) > 1:
             await self._emit(p.ev_participant(p.now_ms() - self._clock_start, patch))
+
+        alert = getattr(update, "alert", None)
+        if alert:
+            # Silence on one track must be visible: otherwise a broken monitor
+            # looks like a participant who simply stopped talking.
+            who = state.get("display_name") or state["id"]
+            log.warning("participant %s: %s", state["id"], alert)
+            await self._emit(
+                p.ev_notice(
+                    p.now_ms() - self._clock_start,
+                    f"{who}: {alert}. Остальные участники записываются.",
+                    "warn",
+                )
+            )
 
     def set_artifacts_dir(self, path: Any) -> None:
         """Where to drop diagnostic screenshots and recorded audio (set by the API)."""

@@ -7,13 +7,20 @@ interface SceneProps {
   live: boolean
 }
 
-/** The meeting "stage": one tile per person who is still in the room. */
+/**
+ * The meeting "stage": one tile per person in the room.
+ *
+ * While the meeting runs only present people are shown — a tile that says
+ * "слушает" about somebody who left is wrong. Afterwards everybody who spoke is
+ * shown, because the faces are part of the record: the archive keeps the
+ * thumbnail and the participants stay attributed in the transcript.
+ */
 export function Scene({ participants, live }: SceneProps) {
-  // People who left keep their lines in the transcript, but a tile that says
-  // "слушает" about somebody who is gone is simply wrong.
   const present = participants.filter((participant) => participant.present !== false)
-  const humans = present.filter((participant) => participant.role !== 'bot')
-  const speakers = present.filter((participant) => participant.speaking).length
+  const shown = live ? present : participants
+  const humans = shown.filter((participant) => participant.role !== 'bot')
+  const speakers = shown.filter((participant) => participant.speaking).length
+  const left = shown.length - present.length
 
   return (
     <section className="scene" aria-label="Участники встречи">
@@ -24,19 +31,21 @@ export function Scene({ participants, live }: SceneProps) {
             ? live
               ? 'в комнате никого нет'
               : 'встреча завершена'
-            : `${humans.length} ${plural(humans.length)}${speakers ? ` · говорит ${speakers}` : ''}`}
+            : `${humans.length} ${plural(humans.length)}${speakers ? ` · говорит ${speakers}` : ''}${
+                left > 0 ? ` · вышли ${left}` : ''
+              }`}
         </span>
       </div>
 
-      {present.length === 0 ? (
+      {shown.length === 0 ? (
         <div className="scene__empty">
           <span className="dot dot--live" />
           {live ? 'Никого нет в комнате — ждём участников…' : 'Ждём, когда агент войдёт в комнату…'}
         </div>
       ) : (
         <div className="tiles">
-          {present.map((participant) => (
-            <ParticipantTile key={participant.id} participant={participant} />
+          {shown.map((participant) => (
+            <ParticipantTile key={participant.id} participant={participant} live={live} />
           ))}
         </div>
       )}
@@ -52,14 +61,19 @@ function plural(count: number): string {
   return 'участников'
 }
 
-function ParticipantTile({ participant }: { participant: Participant }) {
+function ParticipantTile({ participant, live }: { participant: Participant; live: boolean }) {
   const confidence = participant.face_confidence
   const accent = { '--accent': participant.color } as CSSProperties
   const isBot = participant.role === 'bot'
+  const gone = participant.present === false
+
+  const status = isBot ? 'ассистент' : gone ? 'вышел' : participant.speaking ? 'говорит' : 'слушает'
 
   return (
     <article
-      className={`tile${participant.speaking ? ' tile--speaking' : ''}${isBot ? ' tile--bot' : ''}`}
+      className={`tile${participant.speaking ? ' tile--speaking' : ''}${isBot ? ' tile--bot' : ''}${
+        gone && !live ? ' tile--gone' : ''
+      }`}
       style={accent}
       title={participant.display_name}
     >
@@ -98,9 +112,7 @@ function ParticipantTile({ participant }: { participant: Participant }) {
 
       <div className="tile__meta">
         <strong className="tile__name">{participant.display_name}</strong>
-        <span className="tile__sub">
-          {isBot ? 'ассистент' : participant.speaking ? 'говорит' : 'слушает'}
-        </span>
+        <span className="tile__sub">{status}</span>
       </div>
     </article>
   )

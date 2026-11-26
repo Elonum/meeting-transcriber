@@ -17,7 +17,7 @@ SEGMENTS = [
 ]
 PARTICIPANTS = [
     {"id": "p-1", "display_name": "Роман", "role": "human", "face_status": "detected"},
-    {"id": "p-agent", "display_name": "Ассистент (бот)", "role": "bot", "face_status": "none"},
+    {"id": "p-agent", "display_name": "Ассистент", "role": "bot", "face_status": "none"},
 ]
 
 

@@ -95,7 +95,14 @@ HALLUCINATION_PHRASES = (
     "играет музыка",
     "субтитры сделал",
     "субтитры подготовил",
+    "субтитры создавал",
+    "субтитры создал",
+    "субтитры созданы",
+    "субтитры от",
+    "dimatorzok",
+    "синецкая",
     "редактор субтитров",
+    "корректор субтитров",
     "thanks for watching",
     "please subscribe",
     "subscribe to my channel",
@@ -103,6 +110,20 @@ HALLUCINATION_PHRASES = (
     "ご視聴ありがとうございました",
     "最後までご視聴",
     "チャンネル登録",
+)
+
+#: The list above cannot cover every wording, so the shapes that give credits away
+#: are matched too: "Субтитры создавал <никто>", "Субтитры: …", "Subtitles by …".
+HALLUCINATION_PATTERNS = (
+    # "Субтитры создавал DimaTorzok", "Субтитры: DimaTorzok", "Титры — …".
+    # A sentence that merely starts with the word ("Субтитры нужны для отчёта")
+    # must survive, so the verb or the colon is required.
+    re.compile(r"^(субтитры|титры)\s*(?:[:—–-]|\s+(?:созда|сдела|подготов|редакт|перев|выполн))"),
+    re.compile(r"^(редактор|корректор)\s+субтитр"),
+    re.compile(r"^(перевод|озвучка|озвучивание)\s*[:—–-]\s*\S"),
+    re.compile(r"^(subtitles?|captions?)\s*(?:[:—–-]|\s+(?:by|created|made|provided))"),
+    re.compile(r"^(edited|translated|proofread|subtitled)\s+by\b"),
+    re.compile(r"\b(dimatorzok|синецкая)\b"),
 )
 
 #: Words from the glossary. On silence or noise Whisper "continues" the prompt and
@@ -144,7 +165,9 @@ def looks_like_hallucination(text: str) -> bool:
         return True
     if not any(character.isalnum() for character in normalized):
         return True
-    return any(phrase in normalized for phrase in HALLUCINATION_PHRASES)
+    if any(phrase in normalized for phrase in HALLUCINATION_PHRASES):
+        return True
+    return any(pattern.search(normalized) for pattern in HALLUCINATION_PATTERNS)
 
 
 def segment_is_noise(segment: Any) -> bool:
@@ -527,6 +550,13 @@ def get_runner(
         return runner
 
 
+#: Short audio is not evidence of a language: below these limits Whisper's own
+#: detection is unreliable, and "Всем привет!" used to be tagged as English.
+LANGUAGE_DETECT_MIN_S = 1.5
+LANGUAGE_SWITCH_MIN_S = 2.5
+LANGUAGE_SWITCH_PROBABILITY = 0.7
+
+
 class ParticipantASR:
     """Turns one participant's PCM stream into partial/final text events."""
 
@@ -545,26 +575,51 @@ class ParticipantASR:
         self._next_partial_ms = 0
         self._last_partial = ""
         self._stream_ms = 0
-        #: Last confidently detected language. A one-word "да" is too short to
-        #: detect reliably, so short utterances reuse this instead of asking
-        #: Whisper to guess again and risk flipping the language mid-sentence.
+        #: Last accepted language. A one-word "да" is too short to detect
+        #: reliably, so short utterances reuse this instead of letting Whisper
+        #: guess again and flip the language mid-sentence.
         self.language: str | None = None
-        self.detect_min_samples = int(SAMPLE_RATE * 1.5)
+        self.detect_min_samples = int(SAMPLE_RATE * LANGUAGE_DETECT_MIN_S)
 
     def _language_for(self, audio: np.ndarray) -> str | None:
         """Which language to ask for: pinned, auto-detected, or last known."""
         if self.runner.language:
             return self.runner.language
-        if audio.size >= self.detect_min_samples:
-            return None  # long enough for Whisper to decide per utterance
+        if self.language is None:
+            # Nothing to stick to yet: let Whisper decide, whatever the length.
+            return None
+        if audio.size >= int(SAMPLE_RATE * LANGUAGE_SWITCH_MIN_S):
+            # Long enough for detection to be trustworthy; this is how a meeting
+            # that switches to English is picked up.
+            return None
         return self.language
 
     def _transcribe(self, audio: np.ndarray, *, greedy: bool = False) -> Transcript:
         result = self.runner.transcribe(audio, greedy=greedy, language=self._language_for(audio))
-        # Only auto-detection updates the sticky language: a pinned one is the
-        # operator's decision and must survive whatever Whisper reports.
-        if not self.runner.language and result.language and audio.size >= self.detect_min_samples:
+        if self.runner.language or not result.language:
+            return result  # pinned by the operator, or nothing detected
+
+        seconds = audio.size / SAMPLE_RATE
+        probability = result.probability or 0.0
+        if self.language is None:
+            if seconds >= LANGUAGE_DETECT_MIN_S:
+                self.language = result.language
+            return result
+
+        if (
+            result.language != self.language
+            and seconds >= LANGUAGE_SWITCH_MIN_S
+            and probability >= LANGUAGE_SWITCH_PROBABILITY
+        ):
+            # A long, confident utterance in another language: accept the switch.
+            log.info("asr: language switched %s -> %s", self.language, result.language)
             self.language = result.language
+            return result
+
+        if result.language != self.language:
+            # A short phrase is not evidence. Report the language the text is
+            # actually in, so "Всем привет!" is not tagged as English.
+            return Transcript(text=result.text, language=self.language, probability=result.probability)
         return result
 
     def push(self, pcm: bytes) -> list[ASREvent]:

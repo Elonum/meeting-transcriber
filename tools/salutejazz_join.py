@@ -39,7 +39,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--room", required=True, help="room id, e.g. 71qmtd")
     parser.add_argument("--password", required=True)
-    parser.add_argument("--name", default="Ассистент (транскрибация)")
+    parser.add_argument("--name", default="Ассистент")
     parser.add_argument("--seconds", type=int, default=25)
     parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()

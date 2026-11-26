@@ -13,14 +13,17 @@ from app.asr import SAMPLE_RATE, ASREvent, ParticipantASR, Transcript, WhisperRu
 class FakeRunner:
     """Stands in for Whisper: records what language it was asked for."""
 
-    def __init__(self, language: str | None = None, detected: str = "en") -> None:
+    def __init__(
+        self, language: str | None = None, detected: str = "en", probability: float = 0.98
+    ) -> None:
         self.language = language  # pinned language, like WhisperRunner.language
         self.detected = detected
+        self.probability = probability
         self.calls: list[str | None] = []
 
     def transcribe(self, audio, *, greedy: bool = False, language=None) -> Transcript:  # noqa: ANN001, ARG002
         self.calls.append(language)
-        return Transcript(text="hello there", language=self.detected, probability=0.98)
+        return Transcript(text="hello there", language=self.detected, probability=self.probability)
 
 
 def audio(seconds: float) -> np.ndarray:
@@ -157,3 +160,60 @@ def test_runner_cache_separates_prompts() -> None:
 
     assert first is again
     assert first is not second
+
+
+def test_a_short_russian_phrase_is_not_tagged_english() -> None:
+    """The reported bug: "Всем привет!" (1.3 s) came back labelled EN."""
+    runner = FakeRunner(detected="ru")
+    asr = ParticipantASR("p-1", runner)  # type: ignore[arg-type]
+    asr._transcribe(audio(2.0))  # establishes ru as the sticky language
+
+    runner.detected = "en"  # Whisper's guess on one short utterance
+    result = asr._transcribe(audio(1.3))
+
+    assert runner.calls[-1] == "ru", "a short phrase must be decoded with the known language"
+    assert result.language == "ru", "and must be tagged with it, not with the guess"
+    assert asr.language == "ru"
+
+
+def test_a_long_confident_utterance_switches_the_language() -> None:
+    runner = FakeRunner(detected="ru")
+    asr = ParticipantASR("p-1", runner)  # type: ignore[arg-type]
+    asr._transcribe(audio(2.0))
+
+    runner.detected = "en"
+    runner.probability = 0.9
+    result = asr._transcribe(audio(3.0))
+
+    assert runner.calls[-1] is None, "a long utterance deserves its own detection"
+    assert result.language == "en"
+    assert asr.language == "en"
+
+
+def test_a_long_but_unsure_utterance_does_not_switch() -> None:
+    runner = FakeRunner(detected="ru")
+    asr = ParticipantASR("p-1", runner)  # type: ignore[arg-type]
+    asr._transcribe(audio(2.0))
+
+    runner.detected = "en"
+    runner.probability = 0.45
+    result = asr._transcribe(audio(3.0))
+
+    assert result.language == "ru"
+    assert asr.language == "ru"
+
+
+def test_subtitle_credits_are_not_a_transcript() -> None:
+    from app.asr import looks_like_hallucination
+
+    for text in (
+        "Субтитры создавал DimaTorzok",
+        "Субтитры: DimaTorzok",
+        "Редактор субтитров А. Синецкая",
+        "Subtitles by Amara.org",
+        "Edited by John",
+    ):
+        assert looks_like_hallucination(text), text
+
+    for text in ("Субтитры нужны для отчёта", "Перевод статьи занял неделю", "Всем привет!"):
+        assert not looks_like_hallucination(text), text

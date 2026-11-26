@@ -19,7 +19,7 @@ from app.capture import (
 
 
 def agent_with_tracks(*names: str) -> BrowserAgent:
-    agent = BrowserAgent("https://salutejazz.ru/calls/abc123", display_name="Ассистент (бот)")
+    agent = BrowserAgent("https://salutejazz.ru/calls/abc123", display_name="Ассистент")
     for index, name in enumerate(names, start=1):
         track_id = f"track-{index}"
         agent._tracks[track_id] = TrackInfo(track_id=track_id, name=name, label="audio")
@@ -104,8 +104,8 @@ def test_own_name_is_never_used() -> None:
     agent = agent_with_tracks("Роман")
     agent.sync_names(["Роман"])
 
-    agent.sync_names(["Ассистент (бот)"])  # our own tile leaking through
-    agent.sync_names(["Ассистент (бот)"])
+    agent.sync_names(["Ассистент"])  # our own tile leaking through
+    agent.sync_names(["Ассистент"])
 
     assert agent.human_present is False
     assert agent._tracks["track-1"].present is False
@@ -179,3 +179,35 @@ def test_departure_needs_a_list_that_was_actually_seen() -> None:
     updates = agent.sync_names([])
 
     assert [(u.track_id, u.present) for u in updates] == [("track-1", False)]
+
+
+def test_a_silent_track_is_reported_once() -> None:
+    """A participant whose audio never arrives must be visible in the UI."""
+    import time
+
+    agent = agent_with_tracks("Анна Соколова")
+    track_id = agent._tracks["track-1"].track_id
+    agent._started_s[track_id] = time.monotonic() - 30
+
+    agent._check_silent_tracks()
+    agent._check_silent_tracks()
+
+    updates = []
+    while not agent.updates.empty():
+        updates.append(agent.updates.get_nowait())
+
+    assert len(updates) == 1, "one alert per participant, not one per poll"
+    assert updates[0].alert and "нет звука" in updates[0].alert
+
+
+def test_a_track_with_audio_is_not_reported() -> None:
+    import time
+
+    agent = agent_with_tracks("Анна Соколова")
+    track_id = agent._tracks["track-1"].track_id
+    agent._started_s[track_id] = time.monotonic() - 30
+    agent._last_audio_s[track_id] = time.monotonic()
+
+    agent._check_silent_tracks()
+
+    assert agent.updates.empty()

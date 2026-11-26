@@ -76,7 +76,7 @@ class MockPipeline:
         await emit(
             p.ev_participant(
                 elapsed_ms(),
-                p.new_participant(AGENT_ID, "Ассистент (бот)", role="bot", has_video=False),
+                p.new_participant(AGENT_ID, "Ассистент", role="bot", has_video=False),
             )
         )
         for index, (pid, name, _role) in enumerate(PARTICIPANTS):

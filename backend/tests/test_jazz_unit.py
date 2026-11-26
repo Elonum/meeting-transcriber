@@ -412,3 +412,19 @@ def test_late_name_update_is_applied() -> None:
     assert agent._tracks["track-1"].name == "Анна Соколова"
     update = agent.updates.get_nowait()
     assert update.track_id == "track-1" and update.name == "Анна Соколова"
+
+
+def test_a_silent_participant_produces_a_notice() -> None:
+    """The operator must see that one track is silent, not guess it."""
+    pipeline = make_pipeline()
+    events = collect(pipeline)
+    pipeline._participant_state["track-1"] = p.new_participant("p-1", "Анна Соколова")
+
+    asyncio.run(
+        pipeline._apply_participant_update(
+            ParticipantUpdate("track-1", alert="нет звука: браузер не отдаёт дорожку участника")
+        )
+    )
+
+    notices = [event["message"] for event in events if event["type"] == "notice"]
+    assert any("нет звука" in message and "Анна Соколова" in message for message in notices)

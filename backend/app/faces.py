@@ -23,9 +23,12 @@ import base64
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, numpy stays a lazy import
+    import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_YUNET = ROOT / ".models" / "face_detection_yunet_2023mar.onnx"
@@ -64,6 +67,74 @@ def _decode(frame_data_url: str) -> bytes:
         return base64.b64decode(frame_data_url.split(",", 1)[-1], validate=True)
     except Exception:  # noqa: BLE001 - a malformed frame is not an error worth raising
         return b""
+
+
+#: The tile that shows the crop is 4:3, so the crop must be 4:3 too — otherwise
+#: CSS crops it again and the mouth disappears. The window below is deliberately
+#: wider than the face and shifted down: a face box ends at the chin.
+CROP_ASPECT = 4 / 3
+CROP_CONTEXT = 2.0  # crop width = 2 face widths
+CROP_DOWN_SHIFT = 0.10  # of face height, to keep the mouth and chin
+
+
+def face_crop(
+    image: np.ndarray,
+    box: tuple[int, int, int, int],
+    *,
+    max_width: int = 320,
+    aspect: float = CROP_ASPECT,
+    context: float = CROP_CONTEXT,
+) -> str | None:
+    """Cut a pleasant 4:3 portrait around a face and return a JPEG data URL.
+
+    Pure geometry, so it can be tested without a model: the window is clamped to
+    the frame instead of being cut off at the edge, and the aspect ratio is kept
+    even then, because the UI would otherwise crop the picture a second time.
+    """
+    import cv2
+
+    height, width = image.shape[:2]
+    x, y, w, h = box
+    if w <= 0 or h <= 0 or width <= 0 or height <= 0:
+        return None
+    if x + w <= 0 or y + h <= 0 or x >= width or y >= height:
+        return None  # the box is entirely outside the frame
+
+    center_x = x + w / 2
+    center_y = y + h / 2 + CROP_DOWN_SHIFT * h
+
+    crop_w = max(w * context, h * 1.6)
+    crop_h = crop_w / aspect
+    if crop_h < h * 1.5:  # never cut the head to satisfy the aspect ratio
+        crop_h = h * 1.5
+        crop_w = crop_h * aspect
+
+    crop_w = min(crop_w, width)
+    crop_h = min(crop_h, height)
+    if crop_h * aspect <= width:  # keep the aspect after clamping
+        crop_w = crop_h * aspect
+    else:
+        crop_h = crop_w / aspect
+
+    left = center_x - crop_w / 2
+    top = center_y - crop_h / 2
+    left = max(0.0, min(left, width - crop_w))
+    top = max(0.0, min(top, height - crop_h))
+
+    x1, y1 = int(round(left)), int(round(top))
+    x2, y2 = int(round(left + crop_w)), int(round(top + crop_h))
+    crop = image[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+
+    scale = min(1.0, max_width / max(1, crop.shape[1]))
+    if scale < 1.0:
+        crop = cv2.resize(crop, (int(crop.shape[1] * scale), int(crop.shape[0] * scale)))
+
+    ok, buffer = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+    if not ok:
+        return None
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode()
 
 
 class YuNetDetector:
@@ -126,23 +197,10 @@ class YuNetDetector:
         if best is None:
             return None
 
-        score, (x, y, w, h) = best
-        pad_x, pad_y = int(0.3 * w), int(0.35 * h)
-        left = max(0, x - pad_x)
-        top = max(0, y - pad_y)
-        right = min(width, x + w + pad_x)
-        bottom = min(height, y + h + pad_y)
-        crop = image[top:bottom, left:right]
-        if crop.size == 0:
+        score, box = best
+        thumbnail = face_crop(image, box, max_width=self.max_width)
+        if thumbnail is None:
             return None
-
-        scale = min(1.0, self.max_width / max(1, crop.shape[1]))
-        if scale < 1.0:
-            crop = cv2.resize(crop, (int(crop.shape[1] * scale), int(crop.shape[0] * scale)))
-        ok, buffer = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
-        if not ok:
-            return None
-        thumbnail = "data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode()
         return Detection(
             confidence=round(score, 3),
             thumbnail=thumbnail,
@@ -193,19 +251,12 @@ class InsightFaceDetector:
         if score < self.min_confidence:
             return None
         x1, y1, x2, y2 = (int(value) for value in best.bbox)
-        pad = int(0.25 * max(x2 - x1, y2 - y1))
-        crop = image[max(0, y1 - pad) : y2 + pad, max(0, x1 - pad) : x2 + pad]
-        if crop.size == 0:
-            return None
-        scale = min(1.0, self.max_width / max(1, crop.shape[1]))
-        if scale < 1.0:
-            crop = cv2.resize(crop, (int(crop.shape[1] * scale), int(crop.shape[0] * scale)))
-        ok, buffer = cv2.imencode(".jpg", crop, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
-        if not ok:
+        thumbnail = face_crop(image, (x1, y1, x2 - x1, y2 - y1), max_width=self.max_width)
+        if thumbnail is None:
             return None
         return Detection(
             confidence=round(score, 3),
-            thumbnail="data:image/jpeg;base64," + base64.b64encode(buffer.tobytes()).decode(),
+            thumbnail=thumbnail,
             box=(x1, y1, x2 - x1, y2 - y1),
         )
 

@@ -36,6 +36,7 @@ import json
 import logging
 import re
 import tempfile
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,11 @@ LAUNCH_ARGS = [
     "--autoplay-policy=no-user-gesture-required",
     "--disable-blink-features=AutomationControlled",
 ]
+
+#: A participant whose track produces no audio for this long is reported: the
+#: browser or the SFU may have stopped forwarding it, and silence in the
+#: transcript would look like the person simply said nothing.
+SILENT_TRACK_ALERT_S = 20.0
 
 #: Name a track gets before the room tells us who it is.
 UNNAMED_PREFIX = "Участник "
@@ -135,28 +141,58 @@ CAPTURE_JS = r"""
   if (window.__transcribeAgent) return;
 
   const SEND_EVERY_MS = 100;
-  const state = { tracks: new Map(), contexts: new Map(), peers: new Set(), started: false, errors: [] };
+  const state = { tracks: new Map(), contexts: new Map(), peers: new Set(), audioContext: null, started: false, errors: [] };
   window.__transcribeAgent = state;
 
   const send = (key, payload) => {
     try { window.__submitAudio(key, payload); } catch (e) { state.errors.push(String(e)); }
   };
 
+  // One AudioContext for every participant, not one each: Chrome limits how many
+  // a page may hold, and past that limit new tracks are silently not monitored —
+  // which looks exactly like "the agent stopped hearing the others".
+  const sharedContext = () => {
+    if (state.audioContext) return state.audioContext;
+    try {
+      // The browser resamples into this rate, so the server never has to.
+      state.audioContext = new AudioContext({ sampleRate: 16000 });
+    } catch (e) {
+      try { state.audioContext = new AudioContext(); } catch (e2) {
+        state.errors.push('AudioContext: ' + e2);
+        return null;
+      }
+    }
+    return state.audioContext;
+  };
+
+  const resumeContext = () => {
+    const context = state.audioContext;
+    if (context && context.state === 'suspended') context.resume().catch(() => {});
+  };
+  // The page can be backgrounded for hours; a suspended context would stop every
+  // participant at once, so revive it whenever the page becomes visible again.
+  document.addEventListener('visibilitychange', resumeContext);
+  setInterval(resumeContext, 30000);
+
   const ensureMonitor = (track, key) => {
     if (state.contexts.has(key)) return state.contexts.get(key);
     if (track.kind !== 'audio' || !track.getSettings) return null;
-    let context;
-    try {
-      // The browser resamples into this rate, so the server never has to.
-      context = new AudioContext({ sampleRate: 16000 });
-    } catch (e) {
-      try { context = new AudioContext(); } catch (e2) { state.errors.push('AudioContext: ' + e2); return null; }
-    }
+    const context = sharedContext();
+    if (!context) return null;
+
     const stream = new MediaStream([track]);
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(2048, 1, 1);
-    const silent = context.createGain();
-    silent.gain.value = 0;
+    let source;
+    let processor;
+    let silent;
+    try {
+      source = context.createMediaStreamSource(stream);
+      processor = context.createScriptProcessor(2048, 1, 1);
+      silent = context.createGain();
+      silent.gain.value = 0;
+    } catch (e) {
+      state.errors.push('monitor: ' + e);
+      return null;
+    }
 
     let pending = [];
     let pendingSamples = 0;
@@ -509,6 +545,8 @@ class ParticipantUpdate:
     track_id: str
     name: str | None = None
     present: bool | None = None
+    #: Something the operator must know about this participant, e.g. no audio.
+    alert: str | None = None
 
 
 class BrowserAgent:
@@ -518,7 +556,7 @@ class BrowserAgent:
         self,
         url: str,
         *,
-        display_name: str = "Ассистент (транскрибация)",
+        display_name: str = "Ассистент",
         headless: bool = True,
         channel: str | None = "chrome",
         join_timeout_ms: int = 45_000,
@@ -561,6 +599,11 @@ class BrowserAgent:
         #: True once the page actually listed participants. Until then an empty
         #: list means "no list here", not "nobody is in the room".
         self._names_available = False
+        #: When each track registered and when audio last arrived, for the
+        #: "this participant is silent" watchdog.
+        self._started_s: dict[str, float] = {}
+        self._last_audio_s: dict[str, float] = {}
+        self._alerted: set[str] = set()
         self._sync_task: asyncio.Task | None = None
         self.notes: list[str] = []
         self.crashed = False
@@ -856,11 +899,36 @@ class BrowserAgent:
             )
         return updates
 
+    def _check_silent_tracks(self) -> None:
+        """Report a participant whose track never produced any audio.
+
+        Their silence would otherwise look like a break in the conversation: the
+        browser or the SFU can stop forwarding a track and nothing in the
+        transcript says so.
+        """
+        now = time.monotonic()
+        for info in self._tracks.values():
+            if not info.present or info.track_id in self._alerted:
+                continue
+            reference = self._last_audio_s.get(info.track_id, self._started_s.get(info.track_id, now))
+            if now - reference < SILENT_TRACK_ALERT_S:
+                continue
+            self._alerted.add(info.track_id)
+            log.warning("agent: no audio from %s (track %s)", info.name, info.track_id[:8])
+            self._safe_put(
+                self.updates,
+                ParticipantUpdate(
+                    track_id=info.track_id,
+                    alert="нет звука: браузер не отдаёт дорожку участника",
+                ),
+            )
+
     async def _sync_loop(self, interval_s: float = 3.0) -> None:
         while True:
             await asyncio.sleep(interval_s)
             try:
                 await self.sync_participants()
+                self._check_silent_tracks()
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - a broken page must not kill the session
@@ -904,6 +972,7 @@ class BrowserAgent:
             pcm = base64.b64decode(payload)
         except Exception:  # noqa: BLE001
             return
+        self._last_audio_s[track_id] = time.monotonic()
         info = self._tracks.get(track_id)
         chunk = AudioChunk(
             track_id=track_id,
@@ -952,6 +1021,7 @@ class BrowserAgent:
             video_track_id=(str(data["videoTrackId"]) if data.get("videoTrackId") else None),
         )
         self._tracks[track_id] = info
+        self._started_s[track_id] = time.monotonic()
         log.info("agent: track %s -> %s", track_id[:8], name)
         self._safe_put(self.track_events, info)
 

@@ -860,6 +860,14 @@ button.ghost--icon {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+.tile--gone {
+  opacity: 0.62;
+}
+
+.tile--gone .tile__avatar img {
+  filter: grayscale(0.6);
+}
+
 .tile--bot {
   opacity: 0.85;
 }

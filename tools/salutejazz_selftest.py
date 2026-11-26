@@ -290,7 +290,7 @@ def main() -> int:
             agent.wait_for_timeout(3500)
             report["agent_open_body"] = agent.evaluate("(document.body.innerText || '').slice(0, 400)")
             try:
-                agent.fill('input[name="name"]', "Ассистент (транскрибация)", timeout=5000)
+                agent.fill('input[name="name"]', "Ассистент", timeout=5000)
                 report["steps"].append("filled name")
             except Exception as error:  # noqa: BLE001
                 report["steps"].append(f"name field: {error}")
